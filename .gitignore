@@ -11,3 +11,11 @@ __pycache__/
 data/raw/
 data/*.parquet
 data/cache/
+
+# Research workbench outputs - never part of a submission.
+research/cache/
+research/results/
+*.tearsheet.html
+tearsheet*.html
+trades*.csv
+indicators*.csv

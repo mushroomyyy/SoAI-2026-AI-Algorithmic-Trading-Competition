@@ -1,5 +1,37 @@
-lumibot
-python-dotenv
-pandas
-numpy
-scikit-learn
+# Pinned dependencies for the SoAI 2026 submission.
+#
+# WHY PINNED: the competition brief requires "All deps pinned in
+# requirements.txt", and the template README warns that "missing or
+# pinned-incompatible dependencies will cause your submission to be skipped".
+# That failure is SILENT - no error comes back to us, we simply do not appear
+# on the leaderboard. Lumibot shipped 12 releases in the month before the
+# deadline (4.5.70 -> 4.5.83), so an unpinned `lumibot` could install a version
+# on the organizers' machine that never existed when we tested.
+#
+# WHY NOT A FULL `pip freeze`: resolving this file pulls 308 packages. Freezing
+# all of them would (a) pin macOS/arm64-resolved versions that may have no wheel
+# on the organizers' Linux x86_64 box, and (b) turn every transitive bump into a
+# hard conflict. Instead we pin the packages we actually import and let
+# lumibot's own metadata constrain its tree - which it does properly
+# (numpy<2.5.0, pandas>=2.2.0, ccxt>=4.5.50, ...).
+#
+# Verified: Python 3.11.14, macOS arm64, `python backtest.py` exit 0.
+# CI re-verifies this resolves cleanly on Linux across Python 3.10 / 3.11 / 3.12.
+
+# --- Core framework (required entrypoint: lumibot.strategies.Strategy) -------
+lumibot==4.5.83
+
+# --- Numerics: signal computation and portfolio construction ----------------
+pandas==2.3.3
+numpy==2.4.6
+
+# --- Exchange data adapter (crypto spot OHLCV). Arrives as a lumibot
+# transitive, pinned explicitly so local research data is reproducible. -------
+ccxt==4.5.64
+
+# --- Model fitting for the meta-allocator bake-off (menu entry E4). Retained
+# from the template; drop this pin if the final strategy does not use it. -----
+scikit-learn==1.9.0
+
+# --- Retained from the upstream template; lumibot imports it. ---------------
+python-dotenv==1.2.2

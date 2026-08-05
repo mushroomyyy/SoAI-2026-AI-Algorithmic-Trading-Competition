@@ -1,0 +1,110 @@
+name: CI
+
+# Reproduces exactly what the competition organizers do to a submission:
+#   fresh clone -> pip install -r requirements.txt -> python backtest.py
+#
+# Per the competition README, "missing or pinned-incompatible dependencies will
+# cause your submission to be skipped" -- a SILENT disqualification with no error
+# message back to us. This workflow is the only thing standing between a broken
+# pin and losing the competition without ever knowing why.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  clean-clone:
+    # The organizers' Python version is unknown, so verify across the plausible
+    # range rather than assuming ours. Lumibot declares requires-python >=3.10.
+    name: clean clone (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Deliberately NOT cached. A warm cache can mask a dependency that no
+      # longer resolves from scratch, which is precisely the failure we are
+      # trying to catch.
+      - name: Install from requirements.txt (no cache)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Record resolved environment
+        run: pip freeze
+
+      - name: Strategy must be importable at the official entrypoint
+        run: |
+          python -c "
+          from strategies.strategy import Strategy
+          from lumibot.strategies import Strategy as Base
+          assert issubclass(Strategy, Base), 'Strategy must subclass lumibot.strategies.Strategy'
+          print('entrypoint OK:', Strategy)
+          "
+
+      - name: Backtest runs end-to-end
+        run: python backtest.py
+
+      - name: Unit tests
+        run: |
+          pip install pytest
+          pytest -q tests/ || if [ $? -eq 5 ]; then echo "no tests yet"; else exit 1; fi
+
+  guardrails:
+    name: submission guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Every dependency must be pinned with ==
+        # The competition brief requires "All deps pinned in requirements.txt".
+        run: |
+          bad=$(grep -vE '^\s*(#|$)' requirements.txt | grep -vE '==' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Unpinned dependencies found:"; echo "$bad"; exit 1
+          fi
+          echo "all dependencies pinned"
+
+      - name: No secrets, .env, or absolute paths
+        run: |
+          fail=0
+          if git ls-files | grep -qE '(^|/)\.env$'; then
+            echo "::error::.env is committed"; fail=1
+          fi
+          # Absolute paths break reproducibility on the organizers' machine.
+          if git ls-files '*.py' | xargs grep -nE '"/(Users|home)/|'"'"'/(Users|home)/' 2>/dev/null; then
+            echo "::error::hard-coded absolute path found"; fail=1
+          fi
+          exit $fail
+
+      - name: sleeptime must be an allowed cadence
+        # Sub-minute scheduling is auto-rejected during official verification.
+        run: |
+          python - <<'PY'
+          import re, sys, pathlib
+          src = pathlib.Path("strategies/strategy.py").read_text()
+          found = re.findall(r'self\.sleeptime\s*=\s*["\']([^"\']+)["\']', src)
+          if not found:
+              sys.exit("::error::no self.sleeptime assignment found in strategies/strategy.py")
+          allowed = re.compile(r'^\d+[MHD]$')
+          for val in found:
+              if not allowed.match(val):
+                  sys.exit(f"::error::sleeptime {val!r} is not a minute/hour/day cadence")
+              if val.endswith("S"):
+                  sys.exit(f"::error::sub-minute sleeptime {val!r} will be rejected")
+          print("sleeptime OK:", found)
+          PY

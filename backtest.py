@@ -58,15 +58,25 @@ DATA_DIR = Path(__file__).resolve().parent / "data"
 BUDGET = 1_000_000
 
 # Backtest window (both bounds inclusive). Set either to ``None`` to defer
-# entirely to the date range available in your CSV files. Defaults align
-# with the official competition trading window (1-31 August 2026, SGT).
-BACKTEST_START: datetime | None = datetime(2026, 8, 1)
-BACKTEST_END: datetime | None = datetime(2026, 8, 29)
+# entirely to the date range available in your CSV files.
+#
+# CHANGED FROM TEMPLATE: the upstream default was 1-29 Aug 2026, which came
+# from the template's *stale* timeline (the repo has not been updated since
+# 14 May 2026). The real trading window is 16 Aug -> 15 Sep 2026. Rather than
+# hard-code either window, defer to whatever range the CSVs actually cover so
+# the harness is correct for historical research data AND for the placeholder
+# CSV in CI.
+BACKTEST_START: datetime | None = None
+BACKTEST_END: datetime | None = None
 
 # When True, the harness aborts if a symbol declared in ``params.py`` has
 # no matching CSV in ``DATA_DIR``. When False the symbol is skipped with a
 # warning - useful while you are iterating on a subset of your universe.
-STRICT_MISSING_SYMBOLS = False
+#
+# CHANGED FROM TEMPLATE: upstream default was False, which means a missing CSV
+# silently shrinks the universe and the backtest reports a result for a
+# portfolio we never intended to test. Fail loudly instead.
+STRICT_MISSING_SYMBOLS = True
 
 
 # ---------------------------------------------------------------------------
@@ -83,14 +93,28 @@ BUY_FLAT_FEE = 0.0
 SELL_FLAT_FEE = 0.0
 
 # Fee as a fraction of trade notional. 0.0005 == 5 basis points.
-BUY_PERCENT_FEE = 0.0
-SELL_PERCENT_FEE = 0.0
+#
+# CHANGED FROM TEMPLATE: upstream shipped 0.0, i.e. every local backtest ran in
+# a zero-fee world while the competition charges a uniform 2 bps on all trades.
+# That silently flatters any strategy, and flatters high-turnover strategies
+# most - exactly the ones we are evaluating.
+COMPETITION_FEE_BPS = 2.0
+BUY_PERCENT_FEE = COMPETITION_FEE_BPS / 10_000.0
+SELL_PERCENT_FEE = COMPETITION_FEE_BPS / 10_000.0
 
 # Per-contract fee (only relevant for options / futures).
 PER_CONTRACT_FEE = 0.0
 
 # Per-share slippage in price units, applied in the adverse direction
 # (buys fill higher, sells fill lower).
+#
+# NOTE: left at 0.0 deliberately. Lumibot's TradingSlippage(amount=...) is a
+# flat per-share price offset, which CANNOT express the official engine's
+# constraint - it caps each child order at a fraction of the bar's real minute
+# volume and simply does not fill the excess. Modelling that faithfully
+# requires volume-aware sizing in our own execution layer, not a price offset
+# here. Until that layer exists, treat local results as an optimistic upper
+# bound, exactly as the competition README warns.
 BUY_SLIPPAGE_AMOUNT = 0.0
 SELL_SLIPPAGE_AMOUNT = 0.0
 
