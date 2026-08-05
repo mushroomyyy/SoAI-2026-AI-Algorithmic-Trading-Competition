@@ -16,14 +16,22 @@ on:
 
 jobs:
   clean-clone:
-    # The organizers' Python version is unknown, so verify across the plausible
-    # range rather than assuming ours. Lumibot declares requires-python >=3.10.
+    # The organizers' Python version is unknown, so verify across the whole
+    # plausible range rather than assuming ours. Lumibot declares
+    # requires-python >=3.10 with no upper bound, so 3.13 is in scope too.
+    #
+    # This matrix is not box-ticking. Measured on 2026-08-05: google-adk pulls
+    # `crewai[tools]` behind the marker `python_version >= "3.11" and < "3.12"`,
+    # so Python 3.11 installs 308 packages while 3.12 installs 268. The
+    # dependency tree genuinely differs by interpreter version, which means
+    # "it works for us" says nothing about "it works for them" unless we test
+    # every version they might plausibly use.
     name: clean clone (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

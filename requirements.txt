@@ -15,8 +15,18 @@
 # lumibot's own metadata constrain its tree - which it does properly
 # (numpy<2.5.0, pandas>=2.2.0, ccxt>=4.5.50, ...).
 #
-# Verified: Python 3.11.14, macOS arm64, `python backtest.py` exit 0.
-# CI re-verifies this resolves cleanly on Linux across Python 3.10 / 3.11 / 3.12.
+# INTERPRETER SENSITIVITY (measured 2026-08-05): the resolved tree differs by
+# Python version. google-adk (a lumibot dependency) pulls `crewai[tools]` behind
+# the marker `python_version >= "3.11" and python_version < "3.12"`, dragging in
+# crewai, chromadb, lancedb, onnxruntime, pymupdf and friends. Result:
+#     Python 3.11 -> 308 packages, cold install ~12 min (heavy pip backtracking,
+#                    crewai alone probed in 36 versions)
+#     Python 3.12 -> 268 packages, cold install ~95 s, no meaningful backtracking
+# Both resolve and both pass the suite, so these pins are safe either way - but
+# we develop on 3.12 for the faster, leaner, more deterministic tree.
+#
+# Verified: Python 3.12.7, macOS arm64, `python backtest.py` exit 0, 10/10 tests.
+# Also verified on Python 3.11.14. CI re-verifies on Linux across 3.10-3.13.
 
 # --- Core framework (required entrypoint: lumibot.strategies.Strategy) -------
 lumibot==4.5.83
