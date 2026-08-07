@@ -149,6 +149,74 @@ def volatility_target_scalar(
     return float(min(max_leverage, target_volatility / portfolio_volatility))
 
 
+def select_top_k(scores: dict[str, float], k: int) -> list[str]:
+    """
+    The ``k`` highest-scoring assets, ignoring those with no usable score.
+
+    Assets scoring ``nan`` are excluded rather than treated as zero. Treating a
+    missing score as zero would park the asset mid-pack, which in a top-k
+    selection can promote it over a genuinely ranked name.
+
+    Ties break on symbol name so the selection is deterministic -- an unstable
+    sort would make the same inputs produce different books across runs and
+    quietly generate turnover.
+    """
+    if k <= 0:
+        return []
+    usable = [(s, v) for s, v in scores.items() if v is not None and math.isfinite(v)]
+    usable.sort(key=lambda item: (-item[1], item[0]))
+    return [symbol for symbol, _ in usable[:k]]
+
+
+def concentrated_weights(
+    selected: list[str], sleeve_fraction: float, trend_scores: dict[str, float] | None = None
+) -> dict[str, float]:
+    """
+    Equal-weight the sleeve across ``selected``, optionally trend-gated.
+
+    This is the convexity leg. On spot there is no leverage and no short, so the
+    ONLY way to buy upside convexity is concentration in high-volatility names --
+    which also bounds the downside at ``sleeve_fraction``. That bound is the
+    reason this is a deliberate allocation decision rather than an optimizer
+    output.
+
+    Gating by trend keeps us from concentrating into a name that is already
+    rolling over; the ungated variant exists so the sweep can measure whether
+    the gate helps or just costs upside.
+    """
+    if not selected or sleeve_fraction <= 0:
+        return {}
+
+    per_asset = sleeve_fraction / len(selected)
+    weights = {}
+    for symbol in selected:
+        scale = 1.0
+        if trend_scores is not None:
+            score = trend_scores.get(symbol, 0.0)
+            scale = max(0.0, min(1.0, float(score))) if math.isfinite(score or 0.0) else 0.0
+        if scale > 0:
+            weights[symbol] = per_asset * scale
+    return weights
+
+
+def combine(core: dict[str, float], sleeve: dict[str, float], max_gross: float) -> dict[str, float]:
+    """
+    Merge core and sleeve books, respecting the overall exposure ceiling.
+
+    The sleeve deliberately may overlap the core -- a name can be both a core
+    holding and a sleeve pick -- so weights are summed rather than replaced.
+    """
+    merged: dict[str, float] = dict(core)
+    for symbol, weight in sleeve.items():
+        merged[symbol] = merged.get(symbol, 0.0) + weight
+
+    gross = sum(merged.values())
+    if gross > max_gross and gross > 0:
+        merged = {s: w * max_gross / gross for s, w in merged.items()}
+
+    return {s: float(w) for s, w in merged.items() if np.isfinite(w) and w > 1e-6}
+
+
 def build_target_weights(
     volatilities: dict[str, float],
     trend_scores: dict[str, float],

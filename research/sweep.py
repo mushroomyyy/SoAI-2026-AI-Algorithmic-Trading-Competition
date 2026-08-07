@@ -33,6 +33,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--days", type=int, default=1095, help="history to use")
     parser.add_argument("--quick", action="store_true", help="small grid")
+    parser.add_argument("--phase", type=int, default=1, help="1=core sweep, 2=selection+sleeve")
     args = parser.parse_args()
 
     prices = load_universe(list(UNIVERSE))
@@ -55,6 +56,24 @@ def main() -> int:
         grid = {
             "rebalance_band": [0.02, 0.05],
             "rebalance_every": [1, 24],
+        }
+    elif args.phase == 2:
+        # Phase 2 tests what phase 1 never did: cross-sectional selection
+        # (family B) and the convexity sleeve (5.6). Phase 1 established that a
+        # fully-diversified, trend-gated, vol-damped book loses to BTC
+        # buy-and-hold on every metric the competition scores, and that both the
+        # highest volatility target and the slowest rebalance won -- i.e. the
+        # objective wants more risk and less trading. So the gate itself is now
+        # falsifiable, concentration is on the table, and the vol target extends
+        # well above anything phase 1 tried.
+        grid = {
+            "top_k": [0, 3, 5, 8],
+            "core_trend_gated": [True, False],
+            "sleeve_fraction": [0.0, 0.20, 0.30],
+            "target_volatility": [0.70, 1.20],
+            "rebalance_every": [24, 168],
+            "rebalance_band": [0.02],
+            "trend_lookbacks": [(72, 240, 720)],
         }
     else:
         grid = {

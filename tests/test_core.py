@@ -257,3 +257,47 @@ class TestPlanRebalance:
         assert execution.plan_rebalance(
             {"BTC": 0.5}, {}, {"BTC": 100.0}, {}, 1_000_000, **self.BASE
         ) == []
+
+
+class TestSelectTopK:
+    def test_picks_highest_scores(self):
+        assert portfolio.select_top_k({"A": 0.1, "B": 0.9, "C": 0.5}, 2) == ["B", "C"]
+
+    def test_excludes_unusable_scores(self):
+        """nan must be dropped, not treated as zero -- zero ranks mid-pack."""
+        assert portfolio.select_top_k({"A": float("nan"), "B": -0.5}, 2) == ["B"]
+
+    def test_ties_break_deterministically(self):
+        """An unstable sort would churn the book for no reason."""
+        first = portfolio.select_top_k({"C": 0.5, "A": 0.5, "B": 0.5}, 2)
+        assert first == ["A", "B"] == portfolio.select_top_k({"A": 0.5, "B": 0.5, "C": 0.5}, 2)
+
+    def test_zero_k_selects_nothing(self):
+        assert portfolio.select_top_k({"A": 1.0}, 0) == []
+
+
+class TestConcentratedWeights:
+    def test_equal_weights_to_sleeve_fraction(self):
+        w = portfolio.concentrated_weights(["A", "B"], 0.30)
+        assert w == {"A": pytest.approx(0.15), "B": pytest.approx(0.15)}
+
+    def test_trend_gate_removes_downtrending_pick(self):
+        w = portfolio.concentrated_weights(["A", "B"], 0.30, {"A": 1.0, "B": 0.0})
+        assert "B" not in w and w["A"] == pytest.approx(0.15)
+
+    def test_downside_is_bounded_by_sleeve_fraction(self):
+        """The whole point: concentration buys convexity with a hard floor."""
+        assert sum(portfolio.concentrated_weights(["A"], 0.25).values()) <= 0.25 + 1e-9
+
+    def test_empty_selection_is_safe(self):
+        assert portfolio.concentrated_weights([], 0.3) == {}
+
+
+class TestCombine:
+    def test_overlapping_names_are_summed(self):
+        merged = portfolio.combine({"A": 0.3}, {"A": 0.2}, max_gross=0.95)
+        assert merged["A"] == pytest.approx(0.5)
+
+    def test_respects_gross_ceiling(self):
+        merged = portfolio.combine({"A": 0.7}, {"B": 0.6}, max_gross=0.95)
+        assert sum(merged.values()) == pytest.approx(0.95)

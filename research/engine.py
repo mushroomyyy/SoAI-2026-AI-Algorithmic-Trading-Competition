@@ -55,12 +55,36 @@ class Config:
     rebalance_band: float = 0.02
     rebalance_every: int = 1  # bars between decisions; 24 == daily on hourly bars
 
+    # --- family B: cross-sectional selection -----------------------------
+    # top_k = 0 means "hold the whole universe" (the original behaviour).
+    momentum_lookback: int = 168
+    top_k: int = 0
+    risk_adjusted_momentum: bool = True
+
+    # --- 5.6: convexity sleeve -------------------------------------------
+    sleeve_fraction: float = 0.0
+    sleeve_k: int = 2
+    sleeve_trend_gated: bool = True
+
+    # Gate the core on trend at all. The 144-config sweep showed the trend gate
+    # costs more upside than it saves, so it must be falsifiable.
+    core_trend_gated: bool = True
+
     def label(self) -> str:
-        return (
-            f"lb={'/'.join(map(str, self.trend_lookbacks))} "
-            f"vol={self.volatility_window} tgt={self.target_volatility:.2f} "
-            f"band={self.rebalance_band:.3f} every={self.rebalance_every}h"
-        )
+        bits = [
+            f"lb={'/'.join(map(str, self.trend_lookbacks))}",
+            f"tgt={self.target_volatility:.2f}",
+            f"band={self.rebalance_band:.3f}",
+            f"every={self.rebalance_every}h",
+            f"topk={self.top_k or 'all'}",
+            f"gate={'on' if self.core_trend_gated else 'off'}",
+        ]
+        if self.sleeve_fraction > 0:
+            bits.append(
+                f"sleeve={self.sleeve_fraction:.2f}x{self.sleeve_k}"
+                f"{'' if self.sleeve_trend_gated else '(ungated)'}"
+            )
+        return " ".join(bits)
 
 
 def load_universe(symbols: list[str], timeframe: str = "1h") -> pd.DataFrame:
@@ -106,6 +130,16 @@ def precompute(prices: pd.DataFrame, config: Config) -> tuple[pd.DataFrame, pd.D
     return trend, volatility
 
 
+def precompute_momentum(prices: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """
+    Trailing return over ``momentum_lookback`` bars, for cross-sectional ranking.
+
+    Exact vectorized equivalent of ``signals.momentum``; reconciled in
+    ``tests/test_engine_reconciliation.py``.
+    """
+    return prices.pct_change(config.momentum_lookback, fill_method=None)
+
+
 def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
     """
     Run the strategy over ``prices`` and return the equity curve.
@@ -120,6 +154,8 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
         return pd.Series(dtype=float)
 
     trend_all, vol_all = precompute(prices, config)
+    momentum_all = precompute_momentum(prices, config)
+    warmup = max(warmup, config.momentum_lookback + 1)
 
     equity = 1.0
     weights = pd.Series(0.0, index=prices.columns)
@@ -129,21 +165,54 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
         if (i - warmup) % config.rebalance_every == 0:
             vol_row = vol_all.iloc[i]
             trend_row = trend_all.iloc[i]
+            mom_row = momentum_all.iloc[i]
             volatilities = {s: float(v) for s, v in vol_row.items() if np.isfinite(v)}
             trend_scores = {
                 s: (float(trend_row[s]) if np.isfinite(trend_row[s]) else 0.0)
                 for s in volatilities
             }
 
-            target = portfolio.build_target_weights(
-                volatilities,
-                trend_scores,
+            # Rank on risk-adjusted momentum by default: raw trailing return
+            # preferentially selects whatever is simply most volatile, which is
+            # a volatility bet dressed up as a momentum signal.
+            scores = {}
+            for symbol in volatilities:
+                raw = mom_row.get(symbol, np.nan)
+                if not np.isfinite(raw):
+                    continue
+                scores[symbol] = (
+                    float(raw) / volatilities[symbol]
+                    if config.risk_adjusted_momentum
+                    else float(raw)
+                )
+
+            core_universe = volatilities
+            if config.top_k > 0:
+                chosen = set(portfolio.select_top_k(scores, config.top_k))
+                core_universe = {s: v for s, v in volatilities.items() if s in chosen}
+
+            core = portfolio.build_target_weights(
+                core_universe,
+                trend_scores if config.core_trend_gated
+                else {s: 1.0 for s in core_universe},
                 max_weight=config.max_weight,
                 target_volatility=config.target_volatility,
                 max_gross_exposure=config.max_gross_exposure,
                 cash_buffer=config.cash_buffer,
                 average_correlation=config.average_correlation,
             )
+
+            if config.sleeve_fraction > 0:
+                core = {s: w * (1.0 - config.sleeve_fraction) for s, w in core.items()}
+                sleeve = portfolio.concentrated_weights(
+                    portfolio.select_top_k(scores, config.sleeve_k),
+                    config.sleeve_fraction,
+                    trend_scores if config.sleeve_trend_gated else None,
+                )
+                target = portfolio.combine(core, sleeve, config.max_gross_exposure)
+            else:
+                target = core
+
             desired = pd.Series(target, index=prices.columns).fillna(0.0)
 
             # No-trade band, matching the live execution layer: hold unless the

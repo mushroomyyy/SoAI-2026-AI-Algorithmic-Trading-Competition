@@ -75,3 +75,20 @@ def test_trend_is_nan_before_warmup(prices):
     config = Config()
     trend, _ = precompute(prices, config)
     assert trend.iloc[max(config.trend_lookbacks) - 2].isna().all()
+
+
+@pytest.mark.parametrize("lookback", [24, 168, 336])
+def test_vectorized_momentum_matches_strategy_function(prices, lookback):
+    """Cross-sectional ranking is only meaningful if both sides rank identically."""
+    from research.engine import precompute_momentum
+
+    config = Config(momentum_lookback=lookback)
+    momentum = precompute_momentum(prices, config)
+
+    for i in (600, 700, len(prices) - 1):
+        for symbol in prices.columns:
+            expected = signals.momentum(prices[symbol].iloc[: i + 1], lookback)
+            actual = momentum[symbol].iloc[i]
+            assert actual == pytest.approx(expected, rel=1e-9), (
+                f"{symbol}@{i}: engine={actual} vs strategy={expected}"
+            )
