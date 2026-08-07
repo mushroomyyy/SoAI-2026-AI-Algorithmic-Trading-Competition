@@ -149,6 +149,100 @@ def volatility_target_scalar(
     return float(min(max_leverage, target_volatility / portfolio_volatility))
 
 
+def residual_scores(values: dict[str, float]) -> dict[str, float]:
+    """
+    Cross-sectionally demean: each value minus the basket median.
+
+    This is what turns a return into a *reversion* signal (candidate C3). In a
+    long-only crypto book almost everything co-moves, so an asset's raw return
+    is mostly market beta; ranking on it measures "did the market fall", not
+    "did this name overreact". Subtracting the median strips the common
+    component and leaves the idiosyncratic deviation, which is the thing
+    actually expected to revert.
+
+    The median is used rather than the mean because a single extreme mover
+    would drag a mean and shift every other asset's residual with it.
+    """
+    usable = {k: v for k, v in values.items() if v is not None and math.isfinite(v)}
+    if not usable:
+        return {}
+
+    ordered = sorted(usable.values())
+    mid = len(ordered) // 2
+    median = (
+        ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
+    )
+    return {k: v - median for k, v in usable.items()}
+
+
+def rank_percentiles(scores: dict[str, float]) -> dict[str, float]:
+    """
+    Map scores to their cross-sectional rank in [0, 1], highest score = 1.0.
+
+    Blending raw signals directly would let whichever one happens to have the
+    larger numeric scale dominate the combination. Ranking puts every signal on
+    the same footing before they are mixed.
+    """
+    usable = {k: v for k, v in scores.items() if v is not None and math.isfinite(v)}
+    if not usable:
+        return {}
+    if len(usable) == 1:
+        return {next(iter(usable)): 1.0}
+
+    ordered = sorted(usable.items(), key=lambda item: (item[1], item[0]))
+    last = len(ordered) - 1
+    return {symbol: idx / last for idx, (symbol, _) in enumerate(ordered)}
+
+
+def blend_scores(
+    components: list[dict[str, float]], weights: list[float]
+) -> dict[str, float]:
+    """
+    Weighted blend of several signals, combined on ranks rather than raw values.
+
+    This is candidate E1 -- the fixed blend that every adaptive meta-allocator
+    has to beat before its extra parameters are worth carrying. Only assets
+    present in EVERY component are scored: a partial blend would silently mean
+    something different for different assets.
+    """
+    if not components or len(components) != len(weights):
+        return {}
+
+    ranked = [rank_percentiles(component) for component in components]
+    common = set(ranked[0])
+    for table in ranked[1:]:
+        common &= set(table)
+    if not common:
+        return {}
+
+    total = sum(weights)
+    if total <= 0:
+        return {}
+
+    return {
+        symbol: sum(w * table[symbol] for w, table in zip(weights, ranked)) / total
+        for symbol in common
+    }
+
+
+def drawdown_throttle(
+    equity: float, peak_equity: float, stop_drawdown: float
+) -> float:
+    """
+    Exposure multiplier that collapses to 0 once drawdown exceeds a threshold.
+
+    Candidate A9. Deliberately OFF by default: cutting risk into a market
+    drawdown caps upside for no scoring benefit, since drawdown earns nothing
+    and only terminal return is measured. It exists so that claim is testable
+    rather than assumed, and so a catastrophic-scenario variant is available if
+    the measurement supports it.
+    """
+    if stop_drawdown <= 0 or peak_equity <= 0 or not math.isfinite(equity):
+        return 1.0
+    drawdown = 1.0 - (equity / peak_equity)
+    return 0.0 if drawdown >= stop_drawdown else 1.0
+
+
 def select_top_k(scores: dict[str, float], k: int) -> list[str]:
     """
     The ``k`` highest-scoring assets, ignoring those with no usable score.

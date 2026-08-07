@@ -18,7 +18,8 @@ illiquid name is untradeable at size no matter how good its signal looks.
 **Core (70%).** Equal-weighted across the top 8 names ranked by *risk-adjusted*
 momentum — trailing 7-day return divided by realized volatility. Ranking on raw
 return would preferentially select whatever is simply most volatile, which is a
-volatility bet wearing a momentum costume.
+volatility bet wearing a momentum costume. Measured, not assumed: raw momentum
+returned +97.8% in training against +133.3% risk-adjusted.
 
 **Sleeve (30%).** Concentrated in the top 2 names by the same ranking, and
 trend-gated so we do not concentrate into something already rolling over. On
@@ -56,7 +57,9 @@ from the one submitted.
 |---|---|
 | Trend gate on the core | In a long-only book it can only move capital to cash. Against strong long-run drift that costs more upside than the drawdowns it avoids — and drawdown scores zero. Worst median 30-day return of every finalist, in both periods. |
 | Volatility targeting | Same logic. The highest target tested always won, so the limit is no damping at all. |
-| Mean reversion | Our highest-rated prior: the competition's 2 bps fee is ~5× cheaper than real exchange fees, which should have made short-horizon reversion viable. It did not — −18.8% on held-out data vs −4.7% for momentum. |
+| Mean reversion | Our highest-rated prior: the competition's 2 bps fee is ~5× cheaper than real exchange fees, which should have made short-horizon reversion viable. It did not. Tested both formulations — z-score against own history (−18.8% held-out) and residual against the basket median (−16.2% held-out) — against −3.7% for momentum. |
+| Drawdown kill switch | Measured rather than assumed. Even the loosest threshold (stop at 50%) cut P(30d>+20%) from 21.7% to 17.5%, and tighter stops were far worse. De-risking into a selloff caps upside for no scoring benefit. |
+| Signal blending | A fixed blend of momentum with slow momentum tied on the primary metric (21.7%) but lost the median tiebreak in training and carries two extra parameters. Complexity that does not earn its place. |
 
 **Progression**, measured in the Lumibot engine on one fixed 30-day window
 (BTC buy-and-hold returned +2.30% over it):

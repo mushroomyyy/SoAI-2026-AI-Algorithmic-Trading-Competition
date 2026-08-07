@@ -328,3 +328,62 @@ class TestMomentumSkip:
 
     def test_insufficient_data_returns_nan(self):
         assert math.isnan(signals.momentum_skip(series([100.0] * 20), 168, 24))
+
+
+class TestResidualScores:
+    def test_subtracts_the_median(self):
+        r = portfolio.residual_scores({"A": 0.10, "B": 0.05, "C": 0.00})
+        assert r["B"] == pytest.approx(0.0)
+        assert r["A"] == pytest.approx(0.05)
+        assert r["C"] == pytest.approx(-0.05)
+
+    def test_uses_median_not_mean(self):
+        """One extreme mover must not drag every other asset's residual."""
+        r = portfolio.residual_scores({"A": 0.0, "B": 0.0, "C": 0.0, "D": 10.0})
+        assert r["A"] == pytest.approx(0.0)
+
+    def test_drops_unusable_values(self):
+        r = portfolio.residual_scores({"A": 0.1, "B": float("nan")})
+        assert "B" not in r
+
+    def test_empty_input_is_safe(self):
+        assert portfolio.residual_scores({}) == {}
+
+
+class TestRankPercentiles:
+    def test_highest_score_ranks_one(self):
+        r = portfolio.rank_percentiles({"A": 1.0, "B": 2.0, "C": 3.0})
+        assert r["C"] == pytest.approx(1.0) and r["A"] == pytest.approx(0.0)
+
+    def test_single_asset_is_safe(self):
+        assert portfolio.rank_percentiles({"A": 5.0}) == {"A": 1.0}
+
+
+class TestBlendScores:
+    def test_equal_blend_averages_ranks(self):
+        a = {"X": 1.0, "Y": 2.0}
+        b = {"X": 2.0, "Y": 1.0}
+        blended = portfolio.blend_scores([a, b], [0.5, 0.5])
+        assert blended["X"] == pytest.approx(0.5) == blended["Y"]
+
+    def test_ranking_prevents_scale_domination(self):
+        """A component with a huge numeric scale must not swamp the other."""
+        small = {"X": 0.001, "Y": 0.002}
+        huge = {"X": 5000.0, "Y": 1000.0}
+        blended = portfolio.blend_scores([small, huge], [0.5, 0.5])
+        assert blended["X"] == pytest.approx(blended["Y"])
+
+    def test_only_assets_in_every_component_are_scored(self):
+        blended = portfolio.blend_scores([{"X": 1.0, "Y": 2.0}, {"X": 1.0}], [0.5, 0.5])
+        assert set(blended) == {"X"}
+
+
+class TestDrawdownThrottle:
+    def test_disabled_by_default_threshold(self):
+        assert portfolio.drawdown_throttle(0.5, 1.0, 0.0) == 1.0
+
+    def test_holds_exposure_above_the_threshold(self):
+        assert portfolio.drawdown_throttle(0.90, 1.0, 0.25) == 1.0
+
+    def test_cuts_exposure_past_the_threshold(self):
+        assert portfolio.drawdown_throttle(0.70, 1.0, 0.25) == 0.0

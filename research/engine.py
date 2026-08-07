@@ -67,7 +67,21 @@ class Config:
     #   "skip"      family B3 -- momentum excluding the most recent stretch,
     #               to avoid short-horizon reversal contamination
     #   "lowvol"    family B6 -- betting-against-beta analog
+    #   "residual"  family C3 -- reversion on the CROSS-SECTIONALLY DEMEANED
+    #               return, which is what the plan actually specified; plain
+    #               z-score reversion (C2) is mostly a short-beta bet
+    #   "blend"     family E1 -- fixed blend of momentum and residual reversion
     selection_signal: str = "momentum"
+    blend_weight_momentum: float = 0.5
+    # What momentum is blended WITH. "residual" is degenerate -- demeaning is a
+    # monotonic shift, so residual ranks are exactly (1 - momentum ranks) and the
+    # blend collapses to pure momentum, a tie, or pure reversal. A real blend
+    # needs a genuinely independent signal.
+    blend_secondary: str = "slow"      # "slow" momentum | "lowvol" | "residual"
+    slow_momentum_multiple: int = 4
+    # A9 drawdown kill switch; 0 disables. Off by default -- see
+    # portfolio.drawdown_throttle for why.
+    stop_drawdown: float = 0.0
     momentum_skip: int = 24
     zscore_window: int = 168
     equal_weight: bool = False  # D1 instead of D2 inverse-vol
@@ -180,6 +194,7 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
     if len(prices) <= warmup + 2:
         return pd.Series(dtype=float)
 
+    slow_all = None
     trend_all, vol_all = precompute(prices, config)
     if config.selection_signal == "reversal":
         score_all = -precompute_zscore(prices, config)   # most oversold ranks first
@@ -189,11 +204,19 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
         warmup = max(warmup, config.momentum_lookback + config.momentum_skip + 1)
     elif config.selection_signal == "lowvol":
         score_all = -vol_all                              # lowest vol ranks first
+    elif config.selection_signal in ("residual", "blend"):
+        score_all = precompute_momentum(prices, config)
+        warmup = max(warmup, config.momentum_lookback + 1)
+        if config.selection_signal == "blend" and config.blend_secondary == "slow":
+            slow_lb = config.momentum_lookback * config.slow_momentum_multiple
+            slow_all = prices.pct_change(slow_lb, fill_method=None)
+            warmup = max(warmup, slow_lb + 1)
     else:
         score_all = precompute_momentum(prices, config)
         warmup = max(warmup, config.momentum_lookback + 1)
 
     equity = 1.0
+    peak = 1.0
     weights = pd.Series(0.0, index=prices.columns)
     curve = {}
 
@@ -211,7 +234,7 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
             # Rank on risk-adjusted momentum by default: raw trailing return
             # preferentially selects whatever is simply most volatile, which is
             # a volatility bet dressed up as a momentum signal.
-            scores = {}
+            raw_scores = {}
             for symbol in volatilities:
                 raw = score_row.get(symbol, np.nan)
                 if not np.isfinite(raw):
@@ -219,11 +242,37 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
                 # Risk-adjust only return-based signals. Dividing a z-score or a
                 # low-vol rank by volatility would double-count the same term.
                 if config.risk_adjusted_momentum and config.selection_signal in (
-                    "momentum", "skip"
+                    "momentum", "skip", "blend"
                 ):
-                    scores[symbol] = float(raw) / volatilities[symbol]
+                    raw_scores[symbol] = float(raw) / volatilities[symbol]
                 else:
-                    scores[symbol] = float(raw)
+                    raw_scores[symbol] = float(raw)
+
+            if config.selection_signal == "residual":
+                # Most negative residual = most oversold, so invert to rank first.
+                scores = {
+                    s_: -v for s_, v in portfolio.residual_scores(raw_scores).items()
+                }
+            elif config.selection_signal == "blend":
+                if config.blend_secondary == "lowvol":
+                    secondary = {s_: -volatilities[s_] for s_ in raw_scores}
+                elif config.blend_secondary == "residual":
+                    secondary = {
+                        s_: -v for s_, v in portfolio.residual_scores(raw_scores).items()
+                    }
+                else:  # "slow": same signal over a much longer horizon
+                    slow_row = slow_all.iloc[i]
+                    secondary = {
+                        s_: float(slow_row[s_]) / volatilities[s_]
+                        for s_ in raw_scores
+                        if np.isfinite(slow_row.get(s_, np.nan))
+                    }
+                scores = portfolio.blend_scores(
+                    [raw_scores, secondary],
+                    [config.blend_weight_momentum, 1.0 - config.blend_weight_momentum],
+                )
+            else:
+                scores = raw_scores
 
             core_universe = volatilities
             if config.top_k > 0:
@@ -269,6 +318,11 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
                 turnover = float((new_weights - weights).abs().sum())
                 equity *= 1.0 - turnover * FEE_RATE
                 weights = new_weights
+
+        if config.stop_drawdown > 0:
+            peak = max(peak, equity)
+            if portfolio.drawdown_throttle(equity, peak, config.stop_drawdown) == 0.0:
+                weights = weights * 0.0
 
         step = float((weights * returns.iloc[i + 1]).sum())
         equity *= 1.0 + step
