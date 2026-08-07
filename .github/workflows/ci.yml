@@ -105,14 +105,23 @@ jobs:
           python - <<'PY'
           import re, sys, pathlib
           src = pathlib.Path("strategies/strategy.py").read_text()
+          # Resolve BOTH a literal assignment and a module-constant assignment.
+          # Matching only literals means refactoring the value into a constant
+          # silently disarms this check -- which is exactly what happened once.
           found = re.findall(r'self\.sleeptime\s*=\s*["\']([^"\']+)["\']', src)
+          for name in re.findall(r'self\.sleeptime\s*=\s*([A-Za-z_][A-Za-z0-9_]*)', src):
+              m = re.search(rf'^{name}\s*(?::[^=]+)?=\s*["\']([^"\']+)["\']', src, re.M)
+              if not m:
+                  sys.exit(f"::error::self.sleeptime uses {name!r}, which is not a "
+                           f"module-level string constant")
+              found.append(m.group(1))
           if not found:
               sys.exit("::error::no self.sleeptime assignment found in strategies/strategy.py")
           allowed = re.compile(r'^\d+[MHD]$')
           for val in found:
+              if val.upper().endswith("S"):
+                  sys.exit(f"::error::sub-minute sleeptime {val!r} will be rejected")
               if not allowed.match(val):
                   sys.exit(f"::error::sleeptime {val!r} is not a minute/hour/day cadence")
-              if val.endswith("S"):
-                  sys.exit(f"::error::sub-minute sleeptime {val!r} will be rejected")
           print("sleeptime OK:", found)
           PY

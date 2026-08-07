@@ -47,17 +47,47 @@ def test_strategy_implements_required_lifecycle_methods():
         assert method in vars(Strategy), f"{method} must be defined on our Strategy"
 
 
+def _declared_sleeptimes() -> list[str]:
+    """
+    Every cadence value the strategy could assign to ``self.sleeptime``.
+
+    Checks both spellings, because the assignment may be a literal
+    (``self.sleeptime = "60M"``) or a module constant
+    (``self.sleeptime = SLEEPTIME``). An earlier version of this test only
+    matched literals, so refactoring the value into a constant silently
+    disarmed the check -- exactly the kind of quiet regression that would let a
+    rejected cadence reach the organizers.
+    """
+    source = STRATEGY_FILE.read_text()
+    values = re.findall(r"""self\.sleeptime\s*=\s*["']([^"']+)["']""", source)
+
+    names = re.findall(r"self\.sleeptime\s*=\s*([A-Za-z_][A-Za-z0-9_]*)", source)
+    if names:
+        import strategies.strategy as strategy_module
+
+        for name in names:
+            resolved = getattr(strategy_module, name, None)
+            assert isinstance(resolved, str), (
+                f"self.sleeptime is assigned from {name!r}, which does not resolve "
+                f"to a string constant on the module"
+            )
+            values.append(resolved)
+
+    return values
+
+
 def test_sleeptime_is_an_allowed_cadence():
     """Sub-minute scheduling is auto-rejected by the execution environment."""
-    source = STRATEGY_FILE.read_text()
-    found = re.findall(r"""self\.sleeptime\s*=\s*["']([^"']+)["']""", source)
+    found = _declared_sleeptimes()
 
     assert found, "strategies/strategy.py must assign self.sleeptime"
     for value in found:
+        assert not value.upper().endswith("S"), (
+            f"sub-minute sleeptime {value!r} will be rejected at verification"
+        )
         assert ALLOWED_SLEEPTIME.match(value), (
             f"sleeptime {value!r} is not a minute/hour/day cadence"
         )
-        assert not value.endswith("S"), f"sub-minute sleeptime {value!r} will be rejected"
 
 
 def test_all_dependencies_are_pinned():

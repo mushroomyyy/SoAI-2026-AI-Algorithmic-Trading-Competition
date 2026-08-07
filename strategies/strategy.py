@@ -1,143 +1,321 @@
 """
-SoAI 2026 AI Algorithmic Trading Competition - participant entrypoint.
+SoAI 2026 AI Algorithmic Trading Competition -- competition entrypoint.
 
-The official execution environment imports the class defined here, so:
+The official execution environment imports this class, so the file path
+(``strategies/strategy.py``), the class name (``Strategy``) and the base class
+(``lumibot.strategies.Strategy``) are all fixed by the rules.
 
-* Keep the class name ``Strategy``.
-* Keep this file at ``strategies/strategy.py``.
-* Keep the import path ``from strategies.strategy import Strategy``.
+APPROACH (baseline)
+-------------------
+Long-only, trend-gated, volatility-targeted basket of liquid crypto spot pairs,
+with cash as the defensive asset.
 
-Build your strategy by editing ``initialize`` and ``on_trading_iteration``
-below. The default bodies are intentionally minimal so a fresh clone runs
-end-to-end - replace them with your own logic.
+Three constraints shape the design:
 
-Useful Lumibot documentation
-----------------------------
-* Lifecycle methods:    https://lumibot.lumiwealth.com/lifecycle_methods.html
-* Strategy methods:     https://lumibot.lumiwealth.com/strategy_methods.html
-* Strategy properties:  https://lumibot.lumiwealth.com/strategy_properties.html
-* Entities (Asset,
-  Order, Position):     https://lumibot.lumiwealth.com/entities.html
-* Backtesting overview: https://lumibot.lumiwealth.com/backtesting.html
+* **Long-only spot.** Crypto spot cannot be shorted, so there is no
+  market-neutral construction available and every position carries full market
+  beta. The only way to reduce risk is to rotate into cash. Timing exposure is
+  therefore a bigger lever than asset selection, which is why the trend gate --
+  not the ranking -- is the core of the strategy.
+* **Terminal return is the only score.** Risk management earns no points
+  directly. It matters because the strategy runs unattended for 30 days: a book
+  that blows up, or code that raises, cannot recover.
+* **Volume-aware fills.** The official engine will not fill orders exceeding a
+  fraction of the bar's real volume, so orders are sized against recent volume
+  rather than against how much we would like to trade.
+
+ROBUSTNESS
+----------
+``on_trading_iteration`` never raises. Every external call is treated as able to
+return ``None``, a short frame, or garbage, because over 43,000 iterations it
+eventually will. The strategy recomputes its target book from live portfolio
+state every iteration and trades the difference, so a failed or partial fill
+self-heals on the next pass rather than leaving the book permanently skewed.
 """
 
+from __future__ import annotations
+
+import math
+
+from lumibot.entities import Asset
 from lumibot.strategies import Strategy as _LumibotStrategy
+
+from strategies.core import execution, portfolio, signals
+
+# --------------------------------------------------------------------------
+# Tunable parameters. Held as plain module-level constants so the research
+# bake-off can sweep them and the live strategy imports the identical values --
+# there is no second copy of these numbers anywhere.
+# --------------------------------------------------------------------------
+
+# Liquid USDT spot pairs. Liquidity is the binding constraint: an order that
+# exceeds available minute-volume simply does not fill on the official engine.
+UNIVERSE: tuple[str, ...] = (
+    "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "LINK",
+    "DOT", "DOGE", "LTC", "ATOM", "UNI", "AAVE", "NEAR", "APT",
+)
+
+# Hourly cadence. Comfortably inside the allowed minute/hour/day range, and far
+# enough from sub-minute that there is no risk of rejection at verification.
+SLEEPTIME = "60M"
+
+# Trend lookbacks in bars (hours). Three horizons -- roughly 1 day, 3 days and
+# 10 days -- so exposure steps down gradually as successively slower trends roll
+# over, instead of flipping the whole book at a single threshold.
+TREND_LOOKBACKS: tuple[int, ...] = (24, 72, 240)
+
+# Volatility estimation window in bars (~7 days of hourly data). Long enough to
+# be stable, short enough to react to a regime change within the 30-day window.
+VOLATILITY_WINDOW = 168
+
+# Annualized portfolio volatility target. Crypto majors run far hotter than
+# this, so in practice this scales the book down rather than up.
+TARGET_VOLATILITY = 0.45
+
+# Assumed average pairwise correlation, used instead of a sample covariance
+# matrix. Crypto majors co-move strongly and persistently; a full covariance
+# estimate over 16 assets is noisy and its errors concentrate exactly in the
+# low-variance directions an optimizer would lever up.
+AVERAGE_CORRELATION = 0.7
+
+# Risk limits. max_gross < 1.0 and a cash buffer together guarantee we never
+# attempt to spend money we do not have, even if a price mark is stale.
+MAX_WEIGHT_PER_ASSET = 0.20
+MAX_GROSS_EXPOSURE = 0.95
+CASH_BUFFER = 0.05
+
+# Share of recent per-bar volume we are willing to be. The official cap is
+# unpublished, so this is deliberately conservative -- we assume ours must be
+# tighter than theirs.
+VOLUME_PARTICIPATION_CAP = 0.02
+
+# Skip trades too small to change exposure meaningfully.
+MIN_TRADE_NOTIONAL_FRACTION = 0.002
+
+# Bars requested per asset per iteration. Must exceed the longest lookback with
+# headroom for gaps.
+HISTORY_LENGTH = max(max(TREND_LOOKBACKS), VOLATILITY_WINDOW) + 50
+
+# Consecutive failures tolerated before the strategy stops trading and holds
+# whatever it has. This is a BUG circuit breaker, not a market one: it fires on
+# our own defects, never on a drawdown. Cutting risk on a market drawdown would
+# cap upside for no scoring benefit, but continuing to trade through a code
+# fault risks compounding a bug into a wrecked book.
+MAX_CONSECUTIVE_FAILURES = 20
 
 
 class Strategy(_LumibotStrategy):
-    """
-    Your strategy implementation.
-
-    The two methods you almost always need are :meth:`initialize` and
-    :meth:`on_trading_iteration`. Lumibot supports many other lifecycle
-    hooks (``before_market_opens``, ``after_market_closes``,
-    ``on_filled_order``, ...) - see the lifecycle docs linked above when
-    you need them.
-
-    Common attributes you can read at any time (full list in the
-    properties docs):
-
-    * ``self.cash`` / ``self.get_cash()`` - available cash.
-    * ``self.portfolio_value`` / ``self.get_portfolio_value()`` -
-      total mark-to-market portfolio value.
-    * ``self.first_iteration`` - ``True`` on the very first call to
-      ``on_trading_iteration``, useful for one-shot setup or buy & hold.
-    * ``self.is_backtesting`` - ``True`` when running under a backtest
-      engine, ``False`` when running live.
-    """
+    """Trend-gated, volatility-targeted long-only crypto basket."""
 
     # ------------------------------------------------------------------
     # Lifecycle: setup
     # ------------------------------------------------------------------
     def initialize(self):
-        """
-        Called once before trading begins.
+        self.sleeptime = SLEEPTIME
 
-        Typical responsibilities:
+        # Crypto assets are quoted against USD, matching how ``backtest.py``
+        # constructs the Data objects for the local harness.
+        self.quote_asset = Asset(symbol="USD", asset_type=Asset.AssetType.CRYPTO)
+        self.tradable_assets = {
+            symbol: Asset(symbol=symbol, asset_type=Asset.AssetType.CRYPTO)
+            for symbol in UNIVERSE
+        }
 
-        1. Choose how often the strategy wakes up via ``self.sleeptime``
-           (``"1D"`` once per trading day, ``"60M"`` hourly,
-           ``"5M"`` every five minutes, ``"1M"`` every minute).
-        2. Declare the universe you want to trade.
-        3. Set risk limits (max position weight, cash buffer, leverage cap).
-        4. Load any models or precomputed parameters and stash them on
-           ``self`` so :meth:`on_trading_iteration` can reuse them.
-        """
-        # How often this strategy is woken up. Examples:
-        #   "1D"  -> once per trading day (good default for DL signals)
-        #   "60M" -> every hour
-        #   "5M"  -> every five minutes (intraday)
-        self.sleeptime = "1D"
+        # Counters only. Nothing here is required for correctness -- the target
+        # book is recomputed from live portfolio state every iteration, so the
+        # strategy is safe even if it is re-instantiated mid-run (we do not know
+        # whether the official runner keeps one long-lived process).
+        self.consecutive_failures = 0
+        self.iteration_count = 0
 
-        # TODO: declare your universe, risk limits and any state/models
-        # you want to reuse later. For example:
-        #
-        #     self.target_assets = ["SPY", "QQQ"]
-        #     self.max_weight_per_asset = 0.6     # cap any single name at 60%
-        #     self.min_cash_buffer = 0.05         # keep >=5% in cash
-        #     self.lookback_days = 20             # for a moving-average signal
-        #     self.model = joblib.load("models/my_model.pkl")
-
-        self.log_message("Strategy initialized")
+        self.log_message(
+            f"Initialized: {len(UNIVERSE)} assets, sleeptime={SLEEPTIME}, "
+            f"target_vol={TARGET_VOLATILITY}, max_weight={MAX_WEIGHT_PER_ASSET}"
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle: per-step decision making
     # ------------------------------------------------------------------
     def on_trading_iteration(self):
         """
-        Called every ``self.sleeptime`` step while the market is open.
-
-        The classic pattern is:
-
-        1. Read current portfolio state (cash, positions, P&L).
-        2. Pull market data (latest price + historical bars).
-        3. Compute your signal / model prediction and translate it into
-           target positions or weights.
-        4. Diff target vs current positions and submit orders.
-        5. Log enough information to debug later and write your report.
-
-        Replace the no-op below with your trading logic. The default log
-        line is a safe-to-keep instrumentation example - keep some form
-        of logging even after you add real logic, because the official
-        execution environment surfaces these messages back to you.
+        Never raises. A crash here ends the competition run, and there is no
+        opportunity to intervene during the 30-day window, so every failure is
+        caught, logged, and retried on the next iteration.
         """
-        # ------------------------------------------------------------------
-        # Step 1: observe current state.
-        # ------------------------------------------------------------------
-        # portfolio_value = self.get_portfolio_value()
-        # cash = self.get_cash()
-        # positions = self.get_positions()
+        try:
+            self.iteration_count += 1
 
-        # ------------------------------------------------------------------
-        # Step 2: get market data.
-        # ------------------------------------------------------------------
-        # Latest tradable price:
-        #     price = self.get_last_price("SPY")
-        # Historical bars (returns a Bars entity; access .df for a DataFrame):
-        #     bars = self.get_historical_prices("SPY", length=20, timestep="day")
-        #     close = bars.df["close"]
+            if self.consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                self.log_message(
+                    f"Circuit breaker open after {self.consecutive_failures} consecutive "
+                    f"failures; holding current positions and not trading.",
+                    color="red",
+                )
+                return
 
-        # ------------------------------------------------------------------
-        # Step 3: compute your signal / model prediction.
-        # ------------------------------------------------------------------
-        # Translate it into a target weight in [-1, 1] (or [0, 1] long-only)
-        # and from there into a target quantity.
+            self._run_iteration()
+            self.consecutive_failures = 0
 
-        # ------------------------------------------------------------------
-        # Step 4: diff target vs current and submit orders.
-        # ------------------------------------------------------------------
-        # order = self.create_order("SPY", quantity, "buy")
-        # self.submit_order(order)
-        # # Or batch:
-        # self.submit_orders([order_a, order_b])
+        except Exception as exc:  # noqa: BLE001 - deliberately catching everything
+            self.consecutive_failures += 1
+            self.log_message(
+                f"Iteration failed ({self.consecutive_failures}/"
+                f"{MAX_CONSECUTIVE_FAILURES}): {exc!r}",
+                color="red",
+            )
 
-        # TODO: implement your trading logic above.
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+    def _run_iteration(self) -> None:
+        portfolio_value = self._safe_portfolio_value()
+        if portfolio_value <= 0:
+            self.log_message("Portfolio value unavailable or non-positive; skipping.")
+            return
 
-        # ------------------------------------------------------------------
-        # Step 5: log what happened so debugging stays painless.
-        # ------------------------------------------------------------------
-        self.log_message(
-            f"[Strategy] portfolio=${self.get_portfolio_value():,.2f}, "
-            f"cash=${self.get_cash():,.2f}, "
-            f"positions={self.get_positions()}"
+        volatilities: dict[str, float] = {}
+        trend_scores: dict[str, float] = {}
+        prices: dict[str, float] = {}
+        volumes: dict[str, float] = {}
+
+        for symbol, asset in self.tradable_assets.items():
+            closes, volume = self._safe_history(asset)
+            if closes is None:
+                continue
+
+            volatility = signals.realized_volatility(closes, VOLATILITY_WINDOW)
+            if not math.isfinite(volatility):
+                continue  # no usable risk estimate -> no position
+
+            price = self._safe_price(asset, fallback=closes)
+            if price is None:
+                continue
+
+            volatilities[symbol] = volatility
+            trend_scores[symbol] = signals.trend_score(closes, TREND_LOOKBACKS)
+            prices[symbol] = price
+            volumes[symbol] = volume
+
+        if not volatilities:
+            self.log_message("No assets with usable data this iteration; skipping.")
+            return
+
+        target_weights = portfolio.build_target_weights(
+            volatilities,
+            trend_scores,
+            max_weight=MAX_WEIGHT_PER_ASSET,
+            target_volatility=TARGET_VOLATILITY,
+            max_gross_exposure=MAX_GROSS_EXPOSURE,
+            cash_buffer=CASH_BUFFER,
+            average_correlation=AVERAGE_CORRELATION,
         )
+
+        intents = execution.plan_rebalance(
+            target_weights,
+            self._current_quantities(),
+            prices,
+            volumes,
+            portfolio_value,
+            participation_cap=VOLUME_PARTICIPATION_CAP,
+            min_trade_notional=portfolio_value * MIN_TRADE_NOTIONAL_FRACTION,
+        )
+
+        self._submit(intents)
+
+        invested = sum(target_weights.values())
+        self.log_message(
+            f"iter={self.iteration_count} pv=${portfolio_value:,.0f} "
+            f"invested={invested:.1%} cash={1 - invested:.1%} "
+            f"holdings={len(target_weights)} orders={len(intents)}"
+        )
+
+    def _submit(self, intents: list[execution.OrderIntent]) -> None:
+        """Submit orders one at a time so a single rejection cannot lose the batch."""
+        for intent in intents:
+            try:
+                asset = self.tradable_assets.get(intent.symbol)
+                if asset is None:
+                    continue
+                order = self.create_order(
+                    asset, intent.quantity, intent.side, quote=self.quote_asset
+                )
+                if order is not None:
+                    self.submit_order(order)
+            except Exception as exc:  # noqa: BLE001
+                self.log_message(
+                    f"Order rejected {intent.side} {intent.quantity:.6f} "
+                    f"{intent.symbol}: {exc!r}"
+                )
+
+    # -- defensive wrappers -------------------------------------------------
+    # Each of these can fail or return something unusable in the official
+    # environment. Over ~700 hourly iterations, "unlikely" becomes "expected".
+
+    def _safe_portfolio_value(self) -> float:
+        try:
+            value = float(self.get_portfolio_value())
+            return value if math.isfinite(value) and value > 0 else 0.0
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    def _safe_history(self, asset: Asset):
+        """Return (close series, recent bar volume) or (None, nan) if unusable."""
+        try:
+            bars = self.get_historical_prices(
+                asset, HISTORY_LENGTH, timestep="hour", quote=self.quote_asset
+            )
+            if bars is None:
+                return None, float("nan")
+
+            frame = getattr(bars, "df", None)
+            if frame is None or frame.empty or "close" not in frame:
+                return None, float("nan")
+
+            closes = frame["close"].dropna()
+            if len(closes) < max(TREND_LOOKBACKS[0], 2):
+                return None, float("nan")
+
+            # Median rather than mean: a single volume spike would otherwise
+            # inflate our participation budget exactly when it should not.
+            volume = float("nan")
+            if "volume" in frame:
+                recent = frame["volume"].dropna().tail(24)
+                if len(recent) > 0:
+                    volume = float(recent.median())
+
+            return closes, volume
+        except Exception:  # noqa: BLE001
+            return None, float("nan")
+
+    def _safe_price(self, asset: Asset, fallback) -> float | None:
+        """Last price, falling back to the most recent close if unavailable."""
+        try:
+            price = self.get_last_price(asset, quote=self.quote_asset)
+            if price is not None:
+                price = float(price)
+                if math.isfinite(price) and price > 0:
+                    return price
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            price = float(fallback.iloc[-1])
+            return price if math.isfinite(price) and price > 0 else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _current_quantities(self) -> dict[str, float]:
+        """Live holdings keyed by symbol. Empty dict on any failure."""
+        held: dict[str, float] = {}
+        try:
+            for position in self.get_positions() or []:
+                asset = getattr(position, "asset", None)
+                symbol = getattr(asset, "symbol", None)
+                if symbol is None or symbol not in self.tradable_assets:
+                    continue
+                quantity = float(getattr(position, "quantity", 0.0) or 0.0)
+                if math.isfinite(quantity):
+                    held[symbol] = held.get(symbol, 0.0) + quantity
+        except Exception:  # noqa: BLE001
+            return {}
+        return held

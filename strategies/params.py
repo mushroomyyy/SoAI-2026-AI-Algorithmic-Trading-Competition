@@ -1,40 +1,32 @@
 """
-Parameters shared by the local backtest harness.
+Parameters for the LOCAL backtest harness (``backtest.py``) only.
 
-The official competition execution environment is provided by the
-IntelligenceX technical team and may expose its own universe. This file
-controls the *local* backtest harness only (``backtest.py``), so you can
-iterate quickly during development.
+The official execution environment does not read this file -- it imports
+``strategies.strategy.Strategy`` and supplies its own data feed. The universe
+the strategy actually trades is ``strategies.strategy.UNIVERSE``; this file just
+tells the local harness which CSVs to load so the two line up.
 
-How to customise
-----------------
-1. List the equity / spot tickers you want to trade in
-   ``STOCK_SLEEVE_SYMBOLS``.
-2. List the crypto tickers (quoted in USD) in ``CRYPTO_SLEEVE_SYMBOLS``.
-3. Pick benchmarks for the Lumibot tearsheet comparison line via
-   ``STOCK_BENCH`` / ``CRYPTO_BENCH``.
-4. Make sure each symbol has a matching ``data/{SYMBOL}_1m_spot.csv``
-   file before running ``python backtest.py``.
+Populate ``data/`` first:
 
-The template ships with a single placeholder symbol (``EXAMPLE``) so the
-harness runs end-to-end out of the box against the sample CSV in ``data/``.
+    python research/fetch_data.py
 """
 
-# Equity / spot tickers traded by the local backtest. Add your own symbols
-# here and drop the matching CSV files into ``data/``.
-STOCK_SLEEVE_SYMBOLS: list[str] = [
-    "EXAMPLE",
-]
+from strategies.strategy import UNIVERSE
 
-# Crypto tickers (quoted in USD). Leave empty if your strategy is stocks-only.
-CRYPTO_SLEEVE_SYMBOLS: list[str] = []
+# Crypto-only. Per the plan, free 1-minute US-equity history is only a few days
+# deep, so an equity sleeve could not be validated honestly in the time
+# available; CCXT provides years of free minute bars for crypto.
+STOCK_SLEEVE_SYMBOLS: list[str] = []
 
-# Benchmark symbols. Used by Lumibot to render the comparison line on the
-# generated tearsheet HTML.
-STOCK_BENCH: str = "EXAMPLE"
-CRYPTO_BENCH: str = "EXAMPLE"
+# Mirrors the live universe so local backtests and the official run trade the
+# same names. Single source of truth: strategies/strategy.py.
+CRYPTO_SLEEVE_SYMBOLS: list[str] = list(UNIVERSE)
 
-# Derived set used by ``backtest.py`` to decide whether a loaded symbol
-# should be modelled as ``Asset.AssetType.CRYPTO`` vs ``STOCK``. Do not
-# edit directly; change ``CRYPTO_SLEEVE_SYMBOLS`` instead.
+# Benchmark line on the Lumibot tearsheet. BTC is the honest benchmark for a
+# long-only crypto book -- if the strategy cannot beat simply holding BTC, it
+# has no reason to exist.
+STOCK_BENCH: str = "BTC"
+CRYPTO_BENCH: str = "BTC"
+
+# Derived set used by ``backtest.py`` to classify assets as CRYPTO vs STOCK.
 CRYPTO_SYMBOLS: set[str] = set(CRYPTO_SLEEVE_SYMBOLS)
