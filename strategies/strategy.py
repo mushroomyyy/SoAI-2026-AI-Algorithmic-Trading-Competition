@@ -92,6 +92,13 @@ VOLUME_PARTICIPATION_CAP = 0.02
 # Skip trades too small to change exposure meaningfully.
 MIN_TRADE_NOTIONAL_FRACTION = 0.002
 
+# No-trade band: an asset is only rebalanced once its weight has drifted this
+# far (in absolute portfolio fraction) from target. Measured necessity, not a
+# stylistic choice -- without it a 30-day backtest turned the book over 42.6
+# times, paying 0.85% in fees and considerably more in whipsaw, and finished at
+# -4.26% while the underlying basket returned +1.26%.
+REBALANCE_BAND = 0.02
+
 # Bars requested per asset per iteration. Must exceed the longest lookback with
 # headroom for gaps.
 HISTORY_LENGTH = max(max(TREND_LOOKBACKS), VOLATILITY_WINDOW) + 50
@@ -113,9 +120,17 @@ class Strategy(_LumibotStrategy):
     def initialize(self):
         self.sleeptime = SLEEPTIME
 
-        # Crypto assets are quoted against USD, matching how ``backtest.py``
-        # constructs the Data objects for the local harness.
-        self.quote_asset = Asset(symbol="USD", asset_type=Asset.AssetType.CRYPTO)
+        # Crypto trades continuously; without this the runner can skip
+        # iterations outside equity market hours.
+        self.set_market("24/7")
+
+        # NOTE: we deliberately do NOT override ``self.quote_asset``. Lumibot
+        # defaults it to Asset("USD", "forex"), and an earlier version set it to
+        # a CRYPTO-typed USD instead. That made the engine try to price "USD"
+        # as a tradable crypto pair, get_portfolio_value() returned nothing, and
+        # every one of the 720 iterations bailed out before trading -- a silent
+        # do-nothing run that still exited 0. Inheriting the default keeps us
+        # aligned with whatever the official environment configures.
         self.tradable_assets = {
             symbol: Asset(symbol=symbol, asset_type=Asset.AssetType.CRYPTO)
             for symbol in UNIVERSE
@@ -218,6 +233,7 @@ class Strategy(_LumibotStrategy):
             portfolio_value,
             participation_cap=VOLUME_PARTICIPATION_CAP,
             min_trade_notional=portfolio_value * MIN_TRADE_NOTIONAL_FRACTION,
+            rebalance_band=REBALANCE_BAND,
         )
 
         self._submit(intents)

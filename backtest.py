@@ -194,7 +194,14 @@ def _load_pandas_data() -> tuple[dict[Asset, Data], list[pd.Timestamp], list[pd.
     starts: list[pd.Timestamp] = []
     ends: list[pd.Timestamp] = []
     missing_symbols: list[str] = []
-    crypto_quote = Asset(symbol="USD", asset_type=Asset.AssetType.CRYPTO)
+    # CHANGED FROM TEMPLATE: upstream registered crypto Data against a
+    # CRYPTO-typed USD quote. Lumibot's own default quote asset is
+    # Asset("USD", "forex"), so a CRYPTO-typed quote makes the engine try to
+    # price "USD" as a tradable pair -- get_portfolio_value() then returns
+    # nothing and the strategy silently does nothing for the whole run while
+    # still exiting 0. Register both sleeves against the default quote so the
+    # local harness matches the framework default the official runner will use.
+    crypto_quote = Asset(symbol="USD", asset_type=Asset.AssetType.FOREX)
     stock_quote = Asset(symbol="USD", asset_type=Asset.AssetType.FOREX)
 
     for symbol in symbols:
