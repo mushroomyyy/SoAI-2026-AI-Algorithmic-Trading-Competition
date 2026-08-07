@@ -33,15 +33,28 @@ lumibot==4.5.83
 
 # --- Numerics: signal computation and portfolio construction ----------------
 pandas==2.3.3
-numpy==2.4.6
+
+# numpy is split by interpreter because 2.4.x requires Python >=3.11 and simply
+# does not exist for 3.10 (newest 3.10-compatible release is 2.2.6). A flat
+# `numpy==2.4.6` made `pip install -r requirements.txt` FAIL OUTRIGHT on Python
+# 3.10 -- and since the brief's failure mode for a bad environment is a silent
+# skip, that would have been an invisible disqualification if the organizers
+# happen to run 3.10. Caught by CI, not by reading. Both pins satisfy lumibot's
+# own numpy<2.5.0,>=1.20.0 constraint, and both are exact, so the file stays
+# fully pinned as the rules require.
+numpy==2.4.6; python_version >= "3.11"
+numpy==2.2.6; python_version < "3.11"
 
 # --- Exchange data adapter (crypto spot OHLCV). Arrives as a lumibot
 # transitive, pinned explicitly so local research data is reproducible. -------
 ccxt==4.5.64
 
-# --- Model fitting for the meta-allocator bake-off (menu entry E4). Retained
-# from the template; drop this pin if the final strategy does not use it. -----
-scikit-learn==1.9.0
+# --- REMOVED: scikit-learn. It came from the upstream template and nothing in
+# this repo imports it. It also required Python >=3.11, so it was a second
+# reason the install broke on 3.10. Dropping an unused dependency is strictly
+# better than pinning around it: every package we carry multiplies the chance of
+# a resolution conflict in an environment we cannot inspect. Reinstate only if a
+# model-based candidate actually earns its place. ---------------------------
 
 # --- Retained from the upstream template; lumibot imports it. ---------------
 python-dotenv==1.2.2
