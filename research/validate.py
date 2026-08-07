@@ -37,25 +37,69 @@ from strategies.strategy import UNIVERSE  # noqa: E402
 # themselves against. Naming them explicitly keeps the comparison honest: a
 # complex winner has to beat the simple ones on the held-out period too.
 FINALISTS: list[tuple[str, Config]] = [
-    ("topk8 gate-off sleeve.30x2", Config(
-        trend_lookbacks=(72, 240, 720), target_volatility=1.20, rebalance_every=24,
-        rebalance_band=0.02, top_k=8, core_trend_gated=False,
-        sleeve_fraction=0.30, sleeve_k=2)),
-    ("topk8 gate-off sleeve.20x2", Config(
-        trend_lookbacks=(72, 240, 720), target_volatility=1.20, rebalance_every=24,
-        rebalance_band=0.02, top_k=8, core_trend_gated=False,
-        sleeve_fraction=0.20, sleeve_k=2)),
-    ("all gate-off sleeve.30x2", Config(
-        trend_lookbacks=(72, 240, 720), target_volatility=1.20, rebalance_every=24,
-        rebalance_band=0.02, top_k=0, core_trend_gated=False,
-        sleeve_fraction=0.30, sleeve_k=2)),
-    ("topk8 gate-off no sleeve", Config(
-        trend_lookbacks=(72, 240, 720), target_volatility=1.20, rebalance_every=24,
-        rebalance_band=0.02, top_k=8, core_trend_gated=False)),
-    ("all gate-ON no sleeve (phase-1 baseline)", Config(
-        trend_lookbacks=(72, 240, 720), target_volatility=0.70, rebalance_every=24,
-        rebalance_band=0.02, top_k=0, core_trend_gated=True)),
+    # -- the incumbent (currently in strategies/strategy.py) ----------------
+    ("INCUMBENT momentum topk8 sleeve.30", Config(
+        selection_signal="momentum", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False, sleeve_fraction=0.30, sleeve_k=2)),
+
+    # -- family C: mean reversion. Rated the highest-upside candidate in the
+    #    plan because the competition's 2 bps fee is ~5x cheaper than real
+    #    exchange fees, which was supposed to make short-horizon reversion
+    #    viable where it normally is not. Never previously measured.
+    ("C reversal topk8 sleeve.30", Config(
+        selection_signal="reversal", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False, sleeve_fraction=0.30, sleeve_k=2)),
+    ("C reversal topk8 no sleeve", Config(
+        selection_signal="reversal", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False)),
+    ("C reversal fast (24h z, 6h rebal)", Config(
+        selection_signal="reversal", zscore_window=24, trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=6, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False)),
+
+    # -- family B3: skip-period momentum ------------------------------------
+    ("B3 skip-momentum topk8 sleeve.30", Config(
+        selection_signal="skip", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False, sleeve_fraction=0.30, sleeve_k=2)),
+
+    # -- family B6: low-volatility tilt -------------------------------------
+    ("B6 lowvol topk8 sleeve.30", Config(
+        selection_signal="lowvol", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False, sleeve_fraction=0.30, sleeve_k=2)),
+
+    # -- sizing: D1 equal weight vs D2 inverse vol --------------------------
+    ("D1 equal-weight momentum topk8 sleeve.30", Config(
+        selection_signal="momentum", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False, sleeve_fraction=0.30, sleeve_k=2,
+        equal_weight=True)),
+
+    # -- sleeve sizing ladder, to see whether 0.30 is a plateau or a spike ---
+    ("momentum topk8 sleeve.20", Config(
+        selection_signal="momentum", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False, sleeve_fraction=0.20, sleeve_k=2)),
+    ("momentum topk8 sleeve.40", Config(
+        selection_signal="momentum", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False, sleeve_fraction=0.40, sleeve_k=2)),
+    ("momentum topk8 no sleeve", Config(
+        selection_signal="momentum", trend_lookbacks=(72, 240, 720),
+        target_volatility=1.20, rebalance_every=24, rebalance_band=0.02,
+        top_k=8, core_trend_gated=False)),
+
+    # -- the phase-1 baseline, kept as the thing complexity must beat -------
+    ("phase-1 baseline (gate ON, all names)", Config(
+        selection_signal="momentum", trend_lookbacks=(72, 240, 720),
+        target_volatility=0.70, rebalance_every=24, rebalance_band=0.02,
+        top_k=0, core_trend_gated=True)),
 ]
+
 
 
 def score(label: str, stats: dict) -> None:

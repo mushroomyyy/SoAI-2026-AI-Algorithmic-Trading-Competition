@@ -92,6 +92,55 @@ def trend_score(close: pd.Series, lookbacks: tuple[int, ...]) -> float:
     return float(np.mean(votes))
 
 
+def zscore(close: pd.Series, window: int) -> float:
+    """
+    Standardized deviation of the latest price from its trailing mean.
+
+    The mean-reversion signal (candidate 5.3): a strongly negative z-score means
+    oversold. Selecting the LOWEST z-scores buys what has fallen furthest
+    relative to its own recent range.
+
+    Returns ``nan`` on insufficient data or a degenerate (zero-dispersion)
+    window, so callers exclude the name rather than treating it as neutral.
+    """
+    if close is None or len(close) < window + 1 or window < 2:
+        return float("nan")
+
+    tail = close.astype(float).tail(window)
+    mean = float(tail.mean())
+    sigma = float(tail.std(ddof=1))
+    if not np.isfinite(sigma) or sigma <= 0 or not np.isfinite(mean):
+        return float("nan")
+
+    latest = float(close.iloc[-1])
+    if not np.isfinite(latest):
+        return float("nan")
+
+    return (latest - mean) / sigma
+
+
+def momentum_skip(close: pd.Series, lookback: int, skip: int) -> float:
+    """
+    Trailing return over ``lookback`` bars, EXCLUDING the most recent ``skip``.
+
+    The classic 12-1 construction. Short-horizon reversal contaminates a plain
+    momentum signal -- the most recent stretch tends to mean-revert, which drags
+    against the medium-term trend the signal is trying to capture. Skipping it
+    separates the two effects instead of netting them against each other.
+    """
+    if close is None or skip < 0 or lookback <= 0:
+        return float("nan")
+    if len(close) < lookback + skip + 1:
+        return float("nan")
+
+    end = float(close.iloc[-(skip + 1)])
+    start = float(close.iloc[-(lookback + skip + 1)])
+    if not (np.isfinite(start) and np.isfinite(end)) or start <= 0:
+        return float("nan")
+
+    return end / start - 1.0
+
+
 def momentum(close: pd.Series, lookback: int) -> float:
     """
     Trailing simple return over ``lookback`` bars, for cross-sectional ranking.

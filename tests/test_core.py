@@ -301,3 +301,30 @@ class TestCombine:
     def test_respects_gross_ceiling(self):
         merged = portfolio.combine({"A": 0.7}, {"B": 0.6}, max_gross=0.95)
         assert sum(merged.values()) == pytest.approx(0.95)
+
+
+class TestZScore:
+    def test_oversold_is_negative(self):
+        prices = series([100.0] * 200 + [80.0])
+        assert signals.zscore(prices, 168) < 0
+
+    def test_overbought_is_positive(self):
+        prices = series(list(np.linspace(100, 130, 200)))
+        assert signals.zscore(prices, 168) > 0
+
+    def test_flat_window_returns_nan(self):
+        """Zero dispersion would divide by zero and fabricate an extreme score."""
+        assert math.isnan(signals.zscore(series([100.0] * 300), 168))
+
+    def test_insufficient_data_returns_nan(self):
+        assert math.isnan(signals.zscore(series([100.0] * 10), 168))
+
+
+class TestMomentumSkip:
+    def test_excludes_the_recent_window(self):
+        # Flat for the skipped tail, so the result reflects only the earlier leg.
+        prices = series([100.0] * 10 + [110.0] * 6)
+        assert signals.momentum_skip(prices, 10, 5) == pytest.approx(0.10)
+
+    def test_insufficient_data_returns_nan(self):
+        assert math.isnan(signals.momentum_skip(series([100.0] * 20), 168, 24))

@@ -60,6 +60,17 @@ class Config:
     momentum_lookback: int = 168
     top_k: int = 0
     risk_adjusted_momentum: bool = True
+    # Which family ranks the universe:
+    #   "momentum"  family B  -- buy relative strength
+    #   "reversal"  family C  -- buy the most oversold (z-score), the
+    #               "fee-enabled alpha" that 2 bps was supposed to unlock
+    #   "skip"      family B3 -- momentum excluding the most recent stretch,
+    #               to avoid short-horizon reversal contamination
+    #   "lowvol"    family B6 -- betting-against-beta analog
+    selection_signal: str = "momentum"
+    momentum_skip: int = 24
+    zscore_window: int = 168
+    equal_weight: bool = False  # D1 instead of D2 inverse-vol
 
     # --- 5.6: convexity sleeve -------------------------------------------
     sleeve_fraction: float = 0.0
@@ -72,7 +83,8 @@ class Config:
 
     def label(self) -> str:
         bits = [
-            f"lb={'/'.join(map(str, self.trend_lookbacks))}",
+            f"sig={self.selection_signal}",
+            f"{'EW' if self.equal_weight else 'IV'}",
             f"tgt={self.target_volatility:.2f}",
             f"band={self.rebalance_band:.3f}",
             f"every={self.rebalance_every}h",
@@ -140,6 +152,21 @@ def precompute_momentum(prices: pd.DataFrame, config: Config) -> pd.DataFrame:
     return prices.pct_change(config.momentum_lookback, fill_method=None)
 
 
+def precompute_zscore(prices: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """Vectorized equivalent of ``signals.zscore``; reconciled in tests."""
+    window = config.zscore_window
+    mean = prices.rolling(window).mean()
+    sigma = prices.rolling(window).std(ddof=1)
+    return (prices - mean) / sigma.where(sigma > 0)
+
+
+def precompute_momentum_skip(prices: pd.DataFrame, config: Config) -> pd.DataFrame:
+    """Vectorized equivalent of ``signals.momentum_skip``; reconciled in tests."""
+    skip = config.momentum_skip
+    shifted = prices.shift(skip)
+    return shifted / shifted.shift(config.momentum_lookback) - 1.0
+
+
 def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
     """
     Run the strategy over ``prices`` and return the equity curve.
@@ -154,8 +181,17 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
         return pd.Series(dtype=float)
 
     trend_all, vol_all = precompute(prices, config)
-    momentum_all = precompute_momentum(prices, config)
-    warmup = max(warmup, config.momentum_lookback + 1)
+    if config.selection_signal == "reversal":
+        score_all = -precompute_zscore(prices, config)   # most oversold ranks first
+        warmup = max(warmup, config.zscore_window + 1)
+    elif config.selection_signal == "skip":
+        score_all = precompute_momentum_skip(prices, config)
+        warmup = max(warmup, config.momentum_lookback + config.momentum_skip + 1)
+    elif config.selection_signal == "lowvol":
+        score_all = -vol_all                              # lowest vol ranks first
+    else:
+        score_all = precompute_momentum(prices, config)
+        warmup = max(warmup, config.momentum_lookback + 1)
 
     equity = 1.0
     weights = pd.Series(0.0, index=prices.columns)
@@ -165,7 +201,7 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
         if (i - warmup) % config.rebalance_every == 0:
             vol_row = vol_all.iloc[i]
             trend_row = trend_all.iloc[i]
-            mom_row = momentum_all.iloc[i]
+            score_row = score_all.iloc[i]
             volatilities = {s: float(v) for s, v in vol_row.items() if np.isfinite(v)}
             trend_scores = {
                 s: (float(trend_row[s]) if np.isfinite(trend_row[s]) else 0.0)
@@ -177,22 +213,31 @@ def simulate(prices: pd.DataFrame, config: Config) -> pd.Series:
             # a volatility bet dressed up as a momentum signal.
             scores = {}
             for symbol in volatilities:
-                raw = mom_row.get(symbol, np.nan)
+                raw = score_row.get(symbol, np.nan)
                 if not np.isfinite(raw):
                     continue
-                scores[symbol] = (
-                    float(raw) / volatilities[symbol]
-                    if config.risk_adjusted_momentum
-                    else float(raw)
-                )
+                # Risk-adjust only return-based signals. Dividing a z-score or a
+                # low-vol rank by volatility would double-count the same term.
+                if config.risk_adjusted_momentum and config.selection_signal in (
+                    "momentum", "skip"
+                ):
+                    scores[symbol] = float(raw) / volatilities[symbol]
+                else:
+                    scores[symbol] = float(raw)
 
             core_universe = volatilities
             if config.top_k > 0:
                 chosen = set(portfolio.select_top_k(scores, config.top_k))
                 core_universe = {s: v for s, v in volatilities.items() if s in chosen}
 
+            # Equal weight (D1) is expressed as "pretend every asset has the
+            # same volatility", which makes inverse-vol collapse to equal-weight
+            # without a second code path that could drift from the live one.
+            sizing_vols = (
+                {s: 1.0 for s in core_universe} if config.equal_weight else core_universe
+            )
             core = portfolio.build_target_weights(
-                core_universe,
+                sizing_vols,
                 trend_scores if config.core_trend_gated
                 else {s: 1.0 for s in core_universe},
                 max_weight=config.max_weight,

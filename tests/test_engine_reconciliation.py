@@ -92,3 +92,30 @@ def test_vectorized_momentum_matches_strategy_function(prices, lookback):
             assert actual == pytest.approx(expected, rel=1e-9), (
                 f"{symbol}@{i}: engine={actual} vs strategy={expected}"
             )
+
+
+@pytest.mark.parametrize("window", [48, 168])
+def test_vectorized_zscore_matches_strategy_function(prices, window):
+    """Mean-reversion ranking is only valid if both sides compute the same z."""
+    from research.engine import precompute_zscore
+
+    config = Config(zscore_window=window)
+    z = precompute_zscore(prices, config)
+
+    for i in (600, 700, len(prices) - 1):
+        for symbol in prices.columns:
+            expected = signals.zscore(prices[symbol].iloc[: i + 1], window)
+            assert z[symbol].iloc[i] == pytest.approx(expected, rel=1e-9)
+
+
+@pytest.mark.parametrize("lookback,skip", [(168, 24), (336, 48)])
+def test_vectorized_skip_momentum_matches_strategy_function(prices, lookback, skip):
+    from research.engine import precompute_momentum_skip
+
+    config = Config(momentum_lookback=lookback, momentum_skip=skip)
+    m = precompute_momentum_skip(prices, config)
+
+    for i in (700, len(prices) - 1):
+        for symbol in prices.columns:
+            expected = signals.momentum_skip(prices[symbol].iloc[: i + 1], lookback, skip)
+            assert m[symbol].iloc[i] == pytest.approx(expected, rel=1e-9)
