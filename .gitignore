@@ -19,3 +19,6 @@ research/results/
 tearsheet*.html
 trades*.csv
 indicators*.csv
+
+# Private planning docs live outside the repo (../soai-2026-private/).
+PLAN.md
