@@ -29,21 +29,8 @@ Three competition constraints shape it:
 WHAT THE RESEARCH CHANGED
 -------------------------
 The first version of this file was trend-gated and volatility-targeted. Both
-were removed because measurement contradicted them, across 240 configurations
-and confirmed on a held-out period never used for selection:
-
-* **The trend gate hurt.** In a long-only book it can only move capital to cash,
-  and against strong long-run drift that costs more upside than the drawdowns it
-  avoids -- and drawdown scores nothing. The gated baseline had the worst median
-  30-day return of every finalist, in both periods. It survives only in the
-  sleeve, where concentration makes protection worth its cost.
-* **Volatility targeting hurt** for the same reason: the highest target tested
-  always won, so the effective limit is no damping at all.
-* **Mean reversion was falsified.** It was the highest-rated candidate on the
-  theory that the competition's 2 bps fee (roughly 5x cheaper than real exchange
-  fees) would make short-horizon reversion viable. It was not: -18.8% on the
-  held-out period against -4.7% for momentum. Cheap fees were not the binding
-  constraint.
+were removed, and mean reversion was falsified, across 240 configurations and a
+held-out period. README.md has the numbers and the reasoning.
 
 ROBUSTNESS
 ----------
@@ -86,26 +73,19 @@ SLEEPTIME = "60M"
 # turnover on crypto's hourly noise.
 TREND_LOOKBACKS: tuple[int, ...] = (72, 240, 720)
 
-# Whether the CORE book is trend-gated. FALSE, and this is the single most
-# counter-intuitive result in the research: across 240 configurations and on
-# BOTH the training period and the held-out period, gating the core on trend
-# reduced returns. The phase-1 gated baseline posted the worst median 30-day
-# return of every finalist in both windows (-0.40% train, -0.86% test). In a
-# long-only book the gate can only move capital to cash, and in a market with
-# strong long-run drift that costs more upside than the drawdowns it avoids --
-# and drawdown earns zero points here. The gate is retained for the SLEEVE,
-# where concentration makes downside protection actually worth its cost.
+# Off. A trend gate can only move a long-only book to cash, and against long-run
+# drift that costs more upside than the drawdowns it avoids -- and drawdown
+# scores nothing here. Worst median of every finalist in both periods. Kept for
+# the sleeve, where concentration makes protection worth paying for.
 CORE_TREND_GATED = False
 
 # Volatility estimation window in bars (~7 days of hourly data). Long enough to
 # be stable, short enough to react to a regime change within the 30-day window.
 VOLATILITY_WINDOW = 168
 
-# Annualized portfolio volatility target. Deliberately high: every sweep showed
-# the highest target tested winning, because the competition scores terminal
-# return and damping volatility only sacrifices upside for a risk metric worth
-# no points. At 1.20 this rarely binds, acting as a backstop against a genuine
-# volatility explosion rather than as a routine damper.
+# Deliberately high, so it rarely binds -- a backstop against a volatility
+# explosion, not a routine damper. Every sweep favoured the highest target
+# tested; damping volatility trades away the only thing scored.
 TARGET_VOLATILITY = 1.20
 
 # Assumed average pairwise correlation, used instead of a sample covariance
@@ -135,19 +115,11 @@ VOLUME_PARTICIPATION_CAP = 0.02
 MOMENTUM_LOOKBACK = 168      # ~7 days of hourly bars
 TOP_K = 8                    # of 16; 0 would mean hold everything
 
-# Size the core EQUALLY rather than by inverse volatility. This beat inverse-vol
-# on both the training period (+133.3% vs +111.3%, P(30d>+20%) 21.7% vs 20.9%)
-# and the held-out period (-3.7% vs -4.7%), which is the kind of consistency
-# that makes a change worth taking.
+# Equal-weight the core. Beat inverse-vol on both periods.
 #
-# BE PRECISE ABOUT WHAT THIS DOES: the same per-asset volatility dict feeds both
-# the inverse-vol weighting AND the volatility-target scalar, so substituting
-# unit volatilities equal-weights the book *and* effectively disables volatility
-# targeting (the scalar resolves to 1.0, leaving us fully invested up to
-# MAX_GROSS_EXPOSURE). That is not an accident of implementation -- it is the
-# limit of a pattern visible in every sweep: the highest volatility target
-# always won, because damping volatility trades away terminal return, and
-# terminal return is the only thing scored.
+# Note the side effect: the same volatility dict feeds the weighting AND the
+# vol-target scalar, so unit volatilities also switch off vol targeting (scalar
+# resolves to 1.0). Intended, not accidental -- see TARGET_VOLATILITY.
 EQUAL_WEIGHT_CORE = True
 
 # --- Convexity sleeve (the barbell's aggressive end) ------------------------
@@ -156,24 +128,15 @@ EQUAL_WEIGHT_CORE = True
 # SLEEVE_FRACTION. Adding it lifted P(30-day return > +20%) from 18.8% to 20.9%
 # in training and improved the held-out total return. Trend-gated, so we do not
 # concentrate into a name already rolling over.
-# 0.60 chosen deliberately for a rank tournament. On the pre-declared objective
-# -- P(30d > +20%) -- 0.30 and 0.60 are tied (21.7% vs 21.6%), and 0.30 wins the
-# median tiebreak. But the leaderboard is decided by the DEEP right tail, and
-# there 0.60 is better: P(>50%) 6.4% vs 5.4%, P(>100%) 1.7% vs 1.1% in training,
-# a better held-out total (+3.7% vs -3.7%), and +122.7% vs +98.4% in the real
-# Lumibot engine over the full history. The cost is a slightly negative median
-# 30-day return and a ~58% max drawdown -- accepted, because drawdown scores
-# nothing and only terminal return is ranked.
+# Sized for a rank tournament. 0.30 and 0.60 tie on P(30d>+20%); 0.60 wins the
+# deep tail (P>50% 6.4% vs 5.4%, P>100% 1.7% vs 1.1%) at the cost of a slightly
+# negative median and ~58% max drawdown. See README for the full comparison.
+#
+# This puts ~33.7% of the book in EACH of the two sleeve names (~4.6% in the
+# other six). MAX_WEIGHT_PER_ASSET does not cap that -- it governs the core only,
+# and the sleeve is exempt because concentration is the convexity mechanism.
 SLEEVE_FRACTION = 0.60
 SLEEVE_K = 2
-
-# CONCENTRATION THIS PRODUCES: with SLEEVE_FRACTION 0.60 over SLEEVE_K 2, each
-# sleeve name holds ~30% from the sleeve plus its ~5% core share, so after the
-# gross-exposure scaling the top two names carry ~33.7% of the book EACH and the
-# remaining six carry ~4.6%. MAX_WEIGHT_PER_ASSET below does NOT cap this -- it
-# governs core construction only, and the sleeve is deliberately exempt because
-# concentration IS the convexity mechanism. Downside stays bounded at the sleeve
-# weight, which is what makes the bet sizeable rather than reckless.
 SLEEVE_TREND_GATED = True
 
 # Rebalance once per day, at this UTC hour. Daily beat both hourly and weekly.
