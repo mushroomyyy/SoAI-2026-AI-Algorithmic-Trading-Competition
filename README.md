@@ -10,10 +10,28 @@ Entrypoint: [`strategies/strategy.py`](strategies/strategy.py) →
 
 ## The strategy
 
-**Universe.** The 16 most liquid CCXT spot USDT pairs. Liquidity is the binding
-constraint, not an afterthought: the official engine caps each child order at a
-fraction of the bar's real minute volume and does not fill the excess, so an
-illiquid name is untradeable at size no matter how good its signal looks.
+**Universe.** 24 liquid CCXT spot USDT pairs — 16 majors plus 8 deliberately
+higher-volatility names (SUI, PEPE, INJ, FET, ARB, OP, SEI, TIA). Liquidity is
+the binding constraint, not an afterthought: the official engine caps each child
+order at a fraction of the bar's real minute volume and does not fill the
+excess, so an illiquid name is untradeable at size no matter how good its signal
+looks — every addition was screened on median daily dollar volume first.
+
+*Why higher volatility?* There is no measurable return edge to improve (see the
+significance section below), so the only lever that raises the odds of finishing
+**first** is dispersion, and higher-volatility constituents produce it
+mechanically. Measured: 30-day dispersion 23.6% → 33.1%, windows above +50%
+1 → 3, and in the faithful Lumibot engine +122.7% → +218.9% over three years at
+modestly higher turnover (656× → 830×, fees 13.1% → 16.6%, all figures net).
+
+*What that does not claim.* The aggregate return gain comes almost entirely from
+one 2023 fold, when several of these names had launch runs — and they were
+screened in 2026, so the list is survivor-selected. One candidate (RNDR) was
+dropped precisely because its history ends mid-2024 at a ticker migration, which
+is the same failure this whole universe is exposed to. Fold-level consistency
+against BTC actually got *worse* (2/6 → 1/6). The dispersion gain is the part
+that should transfer, because it does not depend on which specific names were
+picked; the return gain should not be believed.
 
 **Core (40%).** Equal-weighted across the top 8 names ranked by *risk-adjusted*
 momentum — trailing 7-day return divided by realized volatility. Ranking on raw

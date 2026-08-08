@@ -59,9 +59,23 @@ from strategies.core import execution, portfolio, signals
 
 # Liquid USDT spot pairs. Liquidity is the binding constraint: an order that
 # exceeds available minute-volume simply does not fill on the official engine.
+#
+# The second row is a deliberate high-volatility extension. There is no
+# measurable return edge to improve here (mean excess over BTC is +1.1% at
+# t = 0.40), so the only lever that raises the odds of finishing FIRST is
+# dispersion -- and higher-volatility constituents produce it mechanically.
+# Measured: 30-day return dispersion 23.6% -> 33.1%, windows above +50% 1 -> 3.
+#
+# Two honest caveats, both in README.md. These names were screened in 2026, so
+# the list is survivor-selected -- one candidate (RNDR) was dropped precisely
+# because its history ends mid-2024 at a ticker migration. And the aggregate
+# return gain comes almost entirely from one 2023 fold; the dispersion gain is
+# the part that should transfer, because it does not depend on which specific
+# names were chosen.
 UNIVERSE: tuple[str, ...] = (
     "BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "LINK",
     "DOT", "DOGE", "LTC", "ATOM", "UNI", "AAVE", "NEAR", "APT",
+    "SUI", "PEPE", "INJ", "FET", "ARB", "OP", "SEI", "TIA",
 )
 
 # Hourly cadence. Comfortably inside the allowed minute/hour/day range, and far
