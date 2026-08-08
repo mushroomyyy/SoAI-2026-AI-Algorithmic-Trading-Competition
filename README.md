@@ -15,17 +15,19 @@ constraint, not an afterthought: the official engine caps each child order at a
 fraction of the bar's real minute volume and does not fill the excess, so an
 illiquid name is untradeable at size no matter how good its signal looks.
 
-**Core (70%).** Equal-weighted across the top 8 names ranked by *risk-adjusted*
+**Core (40%).** Equal-weighted across the top 8 names ranked by *risk-adjusted*
 momentum — trailing 7-day return divided by realized volatility. Ranking on raw
 return would preferentially select whatever is simply most volatile, which is a
 volatility bet wearing a momentum costume. Measured, not assumed: raw momentum
 returned +97.8% in training against +133.3% risk-adjusted.
 
-**Sleeve (30%).** Concentrated in the top 2 names by the same ranking, and
-trend-gated so we do not concentrate into something already rolling over. On
-spot there is no leverage and no short leg, so concentration is the *only*
-mechanism available to buy upside convexity — and it bounds the downside at
-exactly the sleeve weight.
+**Sleeve (60%).** Split between the top 2 names by the same ranking, and
+trend-gated so we do not concentrate into something already rolling over. After
+gross-exposure scaling those two names carry roughly **34% of the book each**,
+the other six about 4.6%. On spot there is no leverage and no short leg, so
+concentration is the *only* mechanism available to buy upside convexity — and it
+bounds the downside at exactly the sleeve weight, which is what makes a bet this
+size deliberate rather than reckless.
 
 **Execution.** Daily rebalance through a 2% no-trade band, with every order
 capped at 2% of recent per-bar volume.
@@ -60,6 +62,7 @@ from the one submitted.
 | Mean reversion | Our highest-rated prior: the competition's 2 bps fee is ~5× cheaper than real exchange fees, which should have made short-horizon reversion viable. It did not. Tested both formulations — z-score against own history (−18.8% held-out) and residual against the basket median (−16.2% held-out) — against −3.7% for momentum. |
 | Drawdown kill switch | Measured rather than assumed. Even the loosest threshold (stop at 50%) cut P(30d>+20%) from 21.7% to 17.5%, and tighter stops were far worse. De-risking into a selloff caps upside for no scoring benefit. |
 | Signal blending | A fixed blend of momentum with slow momentum tied on the primary metric (21.7%) but lost the median tiebreak in training and carries two extra parameters. Complexity that does not earn its place. |
+| Single-name concentration | The fast engine rated it best on the held-out right tail (P(30d>+20%) of 9.3% against 1.4%). The real engine returned **+0.4%** against +122.7%, because putting most of the book in one name runs straight into the volume participation cap — and the top-ranked name changes daily, forcing a large position through a straw. A case where the optimistic engine had to be checked against the faithful one. |
 
 **Progression**, measured in the Lumibot engine on one fixed 30-day window
 (BTC buy-and-hold returned +2.30% over it):
@@ -72,7 +75,17 @@ from the one submitted.
 
 Over three years the selected configuration reaches P(30-day return > +20%) of
 **21.7%**, against **14.4%** for BTC buy-and-hold and **19.7%** for the
-equal-weight basket.
+equal-weight basket. Deeper in the tail — which is what a single-window rank
+tournament actually rewards — it reaches P(>50%) of **6.4%** and P(>100%) of
+**1.7%**, against 0.8% and 0.0% for BTC.
+
+**Sleeve sizing was the last decision, and it was made on the deep tail.** At
+0.30 versus 0.60 the primary metric is tied (21.7% vs 21.6%) and 0.30 wins the
+median tiebreak, but 0.60 is better where it counts: P(>50%) 6.4% vs 5.4%,
+P(>100%) 1.7% vs 1.1%, a better held-out total, and **+122.7% vs +98.4%** over
+the full history in the real Lumibot engine. The price is a marginally negative
+median 30-day return and a ~58% maximum drawdown. Accepted deliberately, because
+drawdown scores nothing here and only terminal return is ranked.
 
 **Honest limitations.** BTC buy-and-hold still beats this strategy on total
 return over the full history; we beat it on the probability of a large 30-day
