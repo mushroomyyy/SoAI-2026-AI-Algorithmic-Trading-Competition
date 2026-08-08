@@ -101,6 +101,38 @@ the full history in the real Lumibot engine. The price is a marginally negative
 median 30-day return and a ~58% maximum drawdown. Accepted deliberately, because
 drawdown scores nothing here and only terminal return is ranked.
 
+**How much of this is statistically real?** Not much, and this is the most
+important caveat in the repository.
+
+The table above uses *overlapping* 30-day windows, so `n = 24,838` is not 24,838
+independent observations — three years contains only **35 non-overlapping**
+30-day windows. Recomputed on those:
+
+| | Mean | Median | Std | Best | Worst | Beat BTC |
+|---|---|---|---|---|---|---|
+| **This strategy** | +5.0% | 0.0% | **23.6%** | **+100.6%** | **−20.3%** | — |
+| BTC buy-and-hold | +3.8% | +2.3% | 15.9% | +56.1% | −27.5% | — |
+
+- Mean excess over BTC: **+1.1%, t = 0.40.** Nowhere near significance.
+- The strategy beat BTC in **15 of 35** windows — *less* than half.
+- P(>50%) is **one** window for each. P(>100%) is **one** versus zero. Remove a
+  single episode and the entire "fatter right tail" claim evaporates.
+
+**So there is no demonstrable return edge over BTC, and this repository does not
+claim one.** Thirty-five observations cannot resolve a tail difference; nothing
+measurable on three years of crypto could.
+
+**What does hold is structural, not statistical.** Concentrating 60% of the book
+in two names mechanically produces more dispersion — that is arithmetic, not a
+fitted result — and the data agrees: **1.48× BTC's standard deviation**, with a
+better best case (+100.6% vs +56.1%) and, as it happens, a better worst case
+(−20.3% vs −27.5%). A single-window rank tournament rewards dispersion at equal
+mean, because finishing first requires an outlier and finishing mid-table pays
+the same as finishing last.
+
+That is the honest case for this entry: **justified by structure, not by
+demonstrated alpha.**
+
 **Walk-forward across six regimes.** A single train/test split can flatter a
 configuration by accident, so the frozen parameters were also scored on six
 sequential ~177-day blocks:
