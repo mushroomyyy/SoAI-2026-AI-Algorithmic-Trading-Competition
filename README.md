@@ -48,7 +48,8 @@ bounds the downside at exactly the sleeve weight, which is what makes a bet this
 size deliberate rather than reckless.
 
 **Execution.** Daily rebalance through a 2% no-trade band, with every order
-capped at 2% of recent per-bar volume.
+capped at **4%** of recent per-bar volume. That cap was chosen for robustness to
+the run's starting capital, which is unpublished — see below.
 
 **Cadence.** `self.sleeptime = "60M"`; the strategy wakes hourly and acts once
 per day. Timing is keyed to the wall clock rather than an iteration counter, so
@@ -61,15 +62,17 @@ it stays correct if the runner restarts or re-instantiates the strategy.
 Design decisions came from measurement, and several contradicted the priors we
 started with. The full record is in `research/`.
 
-**Method.** A vectorized engine (`research/engine.py`) swept 240 configurations
-over three years of hourly bars, scoring each on the *distribution of 30-day
+**Method.** A vectorized engine (`research/engine.py`) swept 280+ configurations
+across ~14 distinct algorithms over three years of hourly bars, scoring each on the *distribution of 30-day
 terminal returns* — the horizon the competition actually measures — rather than
 on Sharpe. Finalists were then re-scored on a held-out period never used for
 selection (`research/validate.py`). The engine imports the same
 `strategies/core/` functions the live strategy uses, and
 `tests/test_engine_reconciliation.py` asserts its vectorized indicators match
-those functions bar-for-bar, so a sweep cannot optimize a strategy different
-from the one submitted.
+those functions bar-for-bar. `tests/test_live_matches_research.py` goes further
+and asserts the live strategy and the engine build the *same book* from the same
+inputs, to 1e-12, across three years — so a sweep cannot optimize a portfolio
+different from the one submitted.
 
 **Three things we removed because the data said so:**
 
@@ -92,61 +95,83 @@ from the one submitted.
 | + validated config | **+0.51%** | **5.8×** | **0.12%** |
 
 Over three years, scored on **window-aligned** 30-day terminal returns
-(24,838 windows for every series):
+(24,869 windows for every series):
 
 | | Total | Median 30d | P(>20%) | P(>50%) | P(>100%) | P(<−25%) |
 |---|---|---|---|---|---|---|
-| **This strategy** | **+168.3%** | −0.58% | **18.0%** | **5.3%** | **1.4%** | 1.9% |
-| BTC buy-and-hold | +149.8% | **+2.12%** | 12.4% | 0.7% | 0.0% | 1.4% |
-| Equal-weight basket | +29.2% | +0.57% | 16.8% | 3.8% | 0.4% | 4.9% |
+| **This strategy** | **+235.4%** | −0.39% | **20.4%** | **8.4%** | **3.2%** | 5.6% |
+| BTC buy-and-hold | +149.8% | **+2.13%** | 12.4% | 0.7% | 0.0% | **1.4%** |
+| Equal-weight basket | +11.0% | −0.27% | 19.8% | 4.8% | 0.3% | 8.5% |
 
-The shape is the point: a **worse median** than BTC, a similar left tail, and a
-right tail several times fatter. BTC never once produced a +100% 30-day window
-in this history; this strategy did in 1.4% of them. That is the trade a
-single-window rank tournament rewards.
+The shape is the point: a **worse median** than BTC and a **worse left tail**
+(5.6% vs 1.4% of windows below −25%), bought in exchange for a right tail
+several times fatter. BTC never once produced a +100% 30-day window in this
+history; this strategy did in 3.2% of them. That is the trade a single-window
+rank tournament rewards — and the left tail is the price, stated plainly.
 
-*An earlier version of this README quoted 21.7% / 14.4% here. Those came from a
-comparison in which the strategy curve began after its warmup while the
-benchmark curve began at bar zero — the two were scored over different windows.
-Corrected above; the relative advantage is essentially unchanged, the absolute
-levels were overstated.*
+In the faithful Lumibot engine, which additionally models volume-capped fills,
+the same three years return **+174.3%** rather than the +235.4% above. Local
+sweep figures are an optimistic upper bound throughout, exactly as the
+competition brief warns.
 
-**Sleeve sizing was the last decision, and it was made on the deep tail.** At
-0.30 versus 0.60 the primary metric is tied (21.7% vs 21.6%) and 0.30 wins the
-median tiebreak, but 0.60 is better where it counts: P(>50%) 6.4% vs 5.4%,
-P(>100%) 1.7% vs 1.1%, a better held-out total, and **+122.7% vs +98.4%** over
-the full history in the real Lumibot engine. The price is a marginally negative
-median 30-day return and a ~58% maximum drawdown. Accepted deliberately, because
-drawdown scores nothing here and only terminal return is ranked.
+*Earlier versions of this README quoted 21.7% / 14.4%, then 18.0% / 12.4%. The
+first pair came from a comparison where the strategy curve began after its
+warmup while the benchmark began at bar zero — scored over different windows.
+The second was correct for a 16-name universe that has since been replaced. Both
+are superseded by the table above.*
+
+**Sleeve sizing was decided on the deep tail.** Measured on the 16-name universe,
+0.30 and 0.60 tie on P(>20%) and 0.30 wins the median tiebreak, but 0.60 wins
+where it counts — P(>50%) 6.4% vs 5.4%, P(>100%) 1.7% vs 1.1%, and +122.7% vs
++98.4% in the real Lumibot engine. The price is a marginally negative median and
+a ~58% maximum drawdown. Accepted deliberately: drawdown scores nothing, only
+terminal return is ranked.
+
+**The volume cap was decided on robustness, not on any single scenario.** The
+official run's starting capital is unpublished, and the cap interacts with it
+directly — too tight and a large book cannot reach its targets, too loose and a
+small book over-trades:
+
+| Cap | at $1M | at $10M |
+|---|---|---|
+| 2% | **+219.9%** | +95.3% |
+| 3% | +190.5% | +134.2% |
+| **4% (shipped)** | +176.0% | **+173.1%** |
+| 5% | +170.0% | +199.7% |
+
+At 2% the outcome swings 125 points on a number we cannot observe. 4% is nearly
+budget-independent, giving up ~44 points against the template's implied $1M to
+remove that exposure. For a run that happens once and cannot be corrected, that
+is the right side of the bet.
 
 **How much of this is statistically real?** Not much, and this is the most
 important caveat in the repository.
 
-The table above uses *overlapping* 30-day windows, so `n = 24,838` is not 24,838
+The table above uses *overlapping* 30-day windows, so `n = 24,869` is not 24,869
 independent observations — three years contains only **35 non-overlapping**
 30-day windows. Recomputed on those:
 
-| | Mean | Median | Std | Best | Worst | Beat BTC |
-|---|---|---|---|---|---|---|
-| **This strategy** | +5.0% | 0.0% | **23.6%** | **+100.6%** | **−20.3%** | — |
-| BTC buy-and-hold | +3.8% | +2.3% | 15.9% | +56.1% | −27.5% | — |
+| | Mean | Median | Std | Best | Worst | >50% | >100% |
+|---|---|---|---|---|---|---|---|
+| **This strategy** | +7.3% | −2.9% | **33.1%** | **+136.8%** | −26.6% | **3** | **1** |
+| BTC buy-and-hold | +3.8% | +2.3% | 15.9% | +56.1% | −27.5% | 1 | 0 |
 
-- Mean excess over BTC: **+1.1%, t = 0.40.** Nowhere near significance.
-- The strategy beat BTC in **15 of 35** windows — *less* than half.
-- P(>50%) is **one** window for each. P(>100%) is **one** versus zero. Remove a
-  single episode and the entire "fatter right tail" claim evaporates.
+- Mean excess over BTC: **+3.5%, t = 0.90.** Still nowhere near significance.
+- The strategy beat BTC in **17 of 35** windows — still not half.
+- P(>100%) rests on a **single** window. Remove that one episode and the
+  headline tail claim evaporates.
 
 **So there is no demonstrable return edge over BTC, and this repository does not
 claim one.** Thirty-five observations cannot resolve a tail difference; nothing
 measurable on three years of crypto could.
 
 **What does hold is structural, not statistical.** Concentrating 60% of the book
-in two names mechanically produces more dispersion — that is arithmetic, not a
-fitted result — and the data agrees: **1.48× BTC's standard deviation**, with a
-better best case (+100.6% vs +56.1%) and, as it happens, a better worst case
-(−20.3% vs −27.5%). A single-window rank tournament rewards dispersion at equal
-mean, because finishing first requires an outlier and finishing mid-table pays
-the same as finishing last.
+in two names, drawn from a deliberately high-volatility universe, mechanically
+produces more dispersion — arithmetic, not a fitted result — and the data agrees:
+**2.08× BTC's standard deviation**, with a far better best case (+136.8% vs
++56.1%) and a comparable worst case (−26.6% vs −27.5%). A single-window rank
+tournament rewards dispersion at equal mean, because finishing first requires an
+outlier and finishing mid-table pays the same as finishing last.
 
 That is the honest case for this entry: **justified by structure, not by
 demonstrated alpha.**
@@ -157,20 +182,23 @@ sequential ~177-day blocks:
 
 | Fold | Period | Strategy | BTC | Beat BTC |
 |---|---|---|---|---|
-| 1 | 2023-09 → 2024-03 | +176.3% | +139.1% | yes |
-| 2 | 2024-03 → 2024-08 | −22.4% | +0.5% | no |
-| 3 | 2024-08 → 2025-02 | +65.7% | +55.3% | yes |
-| 4 | 2025-02 → 2025-08 | +3.9% | +22.2% | no |
-| 5 | 2025-08 → 2026-02 | −45.8% | −41.4% | no |
-| 6 | 2026-02 → 2026-08 | −20.3% | −8.5% | no (held out) |
+| 1 | 2023-09 → 2024-03 | **+475.5%** | +141.1% | yes |
+| 2 | 2024-03 → 2024-08 | −16.0% | −4.4% | no |
+| 3 | 2024-08 → 2025-02 | +36.7% | +54.2% | no |
+| 4 | 2025-02 → 2025-08 | −2.1% | +17.1% | no |
+| 5 | 2025-08 → 2026-02 | −48.9% | −42.9% | no |
+| 6 | 2026-02 → 2026-08 | −9.1% | −6.2% | no (held out) |
 
-**Two of six.** The strategy wins rarely and wins big — folds 1 and 3 beat BTC
-by 37 and 10 points, while the four losses are mostly modest. That is the same
-convexity the tail metrics describe, seen from a different angle. The aggregate +121.5%
-leans heavily on fold 1. Fold 2 is the real warning: BTC gained 47.5% while this
-lost 22.4%, the classic momentum failure when a stable leader outruns a choppy
-tail and rotation bleeds. Fold 2 is deliberately *not* patched — any fix chosen
-now would be fitted to a period we have already seen.
+**One of six**, and this is the least flattering number in the repository. The
+entire aggregate advantage is fold 1 — the 2023 window in which several
+high-volatility constituents had launch runs. Outside it the strategy trails BTC
+in every single regime, including the held-out one.
+
+Note this got *worse* when the universe was widened (2 of 6 → 1 of 6). That was
+a knowing trade: fold consistency is a **level** measure, and there is no level
+edge to protect (t = 0.90). Dispersion is what a rank tournament pays for, and
+dispersion improved from 1.48× to 2.08×. Fold 2 is deliberately *not* patched —
+any fix chosen now would be fitted to a period already seen.
 
 So the accurate description is **higher variance than BTC, not better than
 BTC**. That is still the shape a single-window rank tournament rewards, which is
@@ -233,5 +261,6 @@ strategies/strategy.py   competition entrypoint
 strategies/core/         signals, portfolio construction, execution (pure functions)
 backtest.py              local Lumibot harness (fees set to the competition's 2 bps)
 research/                data fetch, vectorized engine, sweeps, out-of-sample validation
-tests/                   86 tests: submission contract, degenerate inputs, engine reconciliation
+tests/                   133 tests: submission contract, degenerate inputs,
+                         engine/live equivalence, unattended-run failure injection
 ```
