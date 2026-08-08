@@ -268,3 +268,41 @@ def test_orders_are_capped_by_available_volume():
     s.on_trading_iteration()
     for order in s.submitted:
         assert order["quantity"] <= 10.0 * strategy_module.VOLUME_PARTICIPATION_CAP + 1e-9
+
+
+# --------------------------------------------------------------------------
+# Feed availability: the organizers' universe may not expose our tickers.
+# --------------------------------------------------------------------------
+
+class PartialFeedStrategy(HarnessStrategy):
+    """Only some symbols resolve, as with a feed that names things differently."""
+
+    def __init__(self, available, **overrides):
+        super().__init__(**overrides)
+        self.available = set(available)
+
+    def get_historical_prices(self, asset, length, timestep=None, quote=None):
+        if getattr(asset, "symbol", None) not in self.available:
+            return None
+        return super().get_historical_prices(asset, length, timestep, quote)
+
+
+@pytest.mark.parametrize("count", [24, 16, 8, 2, 1, 0])
+def test_degrades_gracefully_when_tickers_are_missing(count):
+    """
+    The universe includes names less certain to exist in every feed, so a
+    partial universe must shrink the book rather than break it. With nothing
+    available the strategy must hold cash and say so, not raise and not trade.
+    """
+    available = list(strategy_module.UNIVERSE)[:count]
+    s = PartialFeedStrategy(available)
+    s.on_trading_iteration()
+
+    assert s.consecutive_failures == 0, "a partial feed is not a code failure"
+    traded = {o["asset"].symbol for o in s.submitted}
+    assert traded <= set(available), "must never trade an unavailable symbol"
+    if count == 0:
+        assert not s.submitted
+        assert any("No assets with usable data" in m for m in s.messages)
+    else:
+        assert s.submitted, f"{count} symbols available but nothing traded"

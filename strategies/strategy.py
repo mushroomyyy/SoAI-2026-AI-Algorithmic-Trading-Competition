@@ -117,10 +117,24 @@ MAX_WEIGHT_PER_ASSET = 0.20
 MAX_GROSS_EXPOSURE = 0.95
 CASH_BUFFER = 0.05
 
-# Share of recent per-bar volume we are willing to be. The official cap is
-# unpublished, so this is deliberately conservative -- we assume ours must be
-# tighter than theirs.
-VOLUME_PARTICIPATION_CAP = 0.02
+# Share of recent per-bar volume we are willing to be.
+#
+# Chosen for ROBUSTNESS to unknown starting capital, not to maximise any single
+# scenario. The official run's budget is unpublished, and this cap interacts with
+# it directly: too tight and a large book cannot reach its target weights, too
+# loose and a small book over-trades. Measured over the full history:
+#
+#     cap    $1M budget   $10M budget
+#     2%       +219.9%        +95.3%
+#     3%       +190.5%       +134.2%
+#     4%       +176.0%       +173.1%   <- nearly budget-independent
+#     5%       +170.0%       +199.7%
+#
+# 4% gives up ~44pt against the template's implied $1M in exchange for removing
+# a 125pt swing that hinges entirely on a number we cannot observe. Trading known
+# upside for an unobservable risk is the right side of that bet when the run
+# happens once and cannot be corrected.
+VOLUME_PARTICIPATION_CAP = 0.04
 
 # --- Cross-sectional selection (family B) ----------------------------------
 # Hold the top-k names by RISK-ADJUSTED momentum. Ranking on raw trailing return
