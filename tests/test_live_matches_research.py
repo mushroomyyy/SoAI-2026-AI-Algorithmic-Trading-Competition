@@ -87,9 +87,12 @@ class _Bare(live.Strategy):
 
 @pytest.fixture(scope="module")
 def panel() -> pd.DataFrame:
-    prices = load_universe(list(live.UNIVERSE))
+    try:
+        prices = load_universe(list(live.UNIVERSE))
+    except FileNotFoundError as exc:  # pragma: no cover - only without any data
+        pytest.skip(str(exc))
     if prices.empty:
-        pytest.skip("no cached market data; run research/fetch_data.py")
+        pytest.skip("market data present but empty")
     return prices
 
 

@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from strategies.core import portfolio, signals  # noqa: E402
 
 CACHE_DIR = Path(__file__).resolve().parent / "cache"
+CSV_DIR = Path(__file__).resolve().parent.parent / "data"
 FEE_RATE = 2.0 / 10_000.0  # competition charges 2 bps on all trades
 
 
@@ -114,14 +115,28 @@ class Config:
 
 
 def load_universe(symbols: list[str], timeframe: str = "1h") -> pd.DataFrame:
-    """Aligned close prices; assets missing data at a timestamp are NaN."""
+    """
+    Aligned close prices; assets missing data at a timestamp are NaN.
+
+    Prefers the local parquet cache, which is gitignored, and falls back to the
+    committed hourly CSVs under ``data/``. The fallback matters: without it the
+    live-vs-research equivalence test could not run on a clean clone, and a test
+    that skips in CI protects nothing.
+    """
     frames = {}
     for symbol in symbols:
-        path = CACHE_DIR / f"{symbol}_{timeframe}.parquet"
-        if path.exists():
-            frames[symbol] = pd.read_parquet(path)["close"]
+        cached = CACHE_DIR / f"{symbol}_{timeframe}.parquet"
+        committed = CSV_DIR / f"{symbol}_{timeframe}_spot.csv"
+        if cached.exists():
+            frames[symbol] = pd.read_parquet(cached)["close"]
+        elif committed.exists():
+            df = pd.read_csv(committed, usecols=["timestamp", "close"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+            frames[symbol] = df.set_index("timestamp")["close"].sort_index()
     if not frames:
-        raise SystemExit(f"no cached data in {CACHE_DIR}; run research/fetch_data.py")
+        raise FileNotFoundError(
+            f"no data in {CACHE_DIR} or {CSV_DIR}; run research/fetch_data.py"
+        )
     return pd.DataFrame(frames).sort_index()
 
 
