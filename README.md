@@ -87,9 +87,33 @@ the full history in the real Lumibot engine. The price is a marginally negative
 median 30-day return and a ~58% maximum drawdown. Accepted deliberately, because
 drawdown scores nothing here and only terminal return is ranked.
 
-**Honest limitations.** BTC buy-and-hold still beats this strategy on total
-return over the full history; we beat it on the probability of a large 30-day
-gain, which is what a single-window tournament rewards. On the held-out period
+**Walk-forward across six regimes.** A single train/test split can flatter a
+configuration by accident, so the frozen parameters were also scored on six
+sequential ~177-day blocks:
+
+| Fold | Period | Strategy | BTC | Beat BTC |
+|---|---|---|---|---|
+| 1 | 2023-09 → 2024-03 | +176.3% | +111.2% | yes |
+| 2 | 2024-03 → 2024-08 | −22.4% | +47.5% | no |
+| 3 | 2024-08 → 2025-02 | +65.7% | +43.8% | yes |
+| 4 | 2025-02 → 2025-08 | +3.9% | +15.0% | no |
+| 5 | 2025-08 → 2026-02 | −45.8% | −41.6% | no |
+| 6 | 2026-02 → 2026-08 | −20.3% | −28.9% | yes (held out) |
+
+**Three of six — a coin flip, not an edge in level.** The aggregate +121.5%
+leans heavily on fold 1. Fold 2 is the real warning: BTC gained 47.5% while this
+lost 22.4%, the classic momentum failure when a stable leader outruns a choppy
+tail and rotation bleeds. Fold 2 is deliberately *not* patched — any fix chosen
+now would be fitted to a period we have already seen.
+
+So the accurate description is **higher variance than BTC, not better than
+BTC**. That is still the shape a single-window rank tournament rewards, which is
+why the entry stands, but it is a weaker claim than the aggregate suggests.
+
+**Honest limitations.** BTC buy-and-hold beats this strategy on total return
+over the full history and in half the individual regimes; we beat it on the
+probability of a large 30-day gain, which is what a single-window tournament
+rewards. On the held-out period
 *no* strategy achieved a 30-day gain above 20% — including BTC at 0.6% — so
 that period confirms the configuration does not break, but cannot confirm the
 upside claim. And all local results are optimistic: the official engine layers
