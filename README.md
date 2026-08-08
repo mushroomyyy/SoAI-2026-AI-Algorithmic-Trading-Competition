@@ -73,11 +73,25 @@ from the one submitted.
 | + no-trade band | −3.66% | 30.5× | 0.61% |
 | + validated config | **+0.51%** | **5.8×** | **0.12%** |
 
-Over three years the selected configuration reaches P(30-day return > +20%) of
-**21.7%**, against **14.4%** for BTC buy-and-hold and **19.7%** for the
-equal-weight basket. Deeper in the tail — which is what a single-window rank
-tournament actually rewards — it reaches P(>50%) of **6.4%** and P(>100%) of
-**1.7%**, against 0.8% and 0.0% for BTC.
+Over three years, scored on **window-aligned** 30-day terminal returns
+(24,838 windows for every series):
+
+| | Total | Median 30d | P(>20%) | P(>50%) | P(>100%) | P(<−25%) |
+|---|---|---|---|---|---|---|
+| **This strategy** | **+168.3%** | −0.58% | **18.0%** | **5.3%** | **1.4%** | 1.9% |
+| BTC buy-and-hold | +149.8% | **+2.12%** | 12.4% | 0.7% | 0.0% | 1.4% |
+| Equal-weight basket | +29.2% | +0.57% | 16.8% | 3.8% | 0.4% | 4.9% |
+
+The shape is the point: a **worse median** than BTC, a similar left tail, and a
+right tail several times fatter. BTC never once produced a +100% 30-day window
+in this history; this strategy did in 1.4% of them. That is the trade a
+single-window rank tournament rewards.
+
+*An earlier version of this README quoted 21.7% / 14.4% here. Those came from a
+comparison in which the strategy curve began after its warmup while the
+benchmark curve began at bar zero — the two were scored over different windows.
+Corrected above; the relative advantage is essentially unchanged, the absolute
+levels were overstated.*
 
 **Sleeve sizing was the last decision, and it was made on the deep tail.** At
 0.30 versus 0.60 the primary metric is tied (21.7% vs 21.6%) and 0.30 wins the
@@ -93,14 +107,16 @@ sequential ~177-day blocks:
 
 | Fold | Period | Strategy | BTC | Beat BTC |
 |---|---|---|---|---|
-| 1 | 2023-09 → 2024-03 | +176.3% | +111.2% | yes |
-| 2 | 2024-03 → 2024-08 | −22.4% | +47.5% | no |
-| 3 | 2024-08 → 2025-02 | +65.7% | +43.8% | yes |
-| 4 | 2025-02 → 2025-08 | +3.9% | +15.0% | no |
-| 5 | 2025-08 → 2026-02 | −45.8% | −41.6% | no |
-| 6 | 2026-02 → 2026-08 | −20.3% | −28.9% | yes (held out) |
+| 1 | 2023-09 → 2024-03 | +176.3% | +139.1% | yes |
+| 2 | 2024-03 → 2024-08 | −22.4% | +0.5% | no |
+| 3 | 2024-08 → 2025-02 | +65.7% | +55.3% | yes |
+| 4 | 2025-02 → 2025-08 | +3.9% | +22.2% | no |
+| 5 | 2025-08 → 2026-02 | −45.8% | −41.4% | no |
+| 6 | 2026-02 → 2026-08 | −20.3% | −8.5% | no (held out) |
 
-**Three of six — a coin flip, not an edge in level.** The aggregate +121.5%
+**Two of six.** The strategy wins rarely and wins big — folds 1 and 3 beat BTC
+by 37 and 10 points, while the four losses are mostly modest. That is the same
+convexity the tail metrics describe, seen from a different angle. The aggregate +121.5%
 leans heavily on fold 1. Fold 2 is the real warning: BTC gained 47.5% while this
 lost 22.4%, the classic momentum failure when a stable leader outruns a choppy
 tail and rotation bleeds. Fold 2 is deliberately *not* patched — any fix chosen

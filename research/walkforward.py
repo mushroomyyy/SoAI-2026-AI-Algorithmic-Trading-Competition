@@ -103,9 +103,20 @@ def main() -> int:
         hi = warmup + (i + 1) * block if i < args.folds - 1 else len(prices)
         panel = prices.iloc[max(0, lo - warmup):hi]
 
-        s = stats(simulate(panel, config))
-        b = stats(benchmark_curve(panel, "BTC"))
-        e = stats(benchmark_curve(panel, None))
+        # The strategy only starts trading after its warmup, so the benchmark
+        # MUST be measured over the strategy curve's own index range. Comparing
+        # a benchmark that includes the warmup bars against a strategy that does
+        # not silently scores the two over different windows -- an earlier
+        # version of this file did exactly that and reported BTC +47.5% for a
+        # fold in which BTC actually returned +1.6%.
+        curve = simulate(panel, config)
+        s = stats(curve)
+        if s is None or curve.empty:
+            print(f"{i + 1:<6}{'(too short to score)':<26}")
+            continue
+        window = panel.loc[curve.index[0]:curve.index[-1]]
+        b = stats(benchmark_curve(window, "BTC"))
+        e = stats(benchmark_curve(window, None))
         if not (s and b):
             print(f"{i + 1:<6}{'(too short to score)':<26}")
             continue
