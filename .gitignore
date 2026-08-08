@@ -22,3 +22,8 @@ indicators*.csv
 
 # Private planning docs live outside the repo (../soai-2026-private/).
 PLAN.md
+
+# Minute-bar CSVs are cached locally only (research/cache/*.parquet); the
+# harness uses hourly bars, so committing minute data stores 60x what it needs.
+data/*_1m_spot.csv
+!data/EXAMPLE_1m_spot.csv

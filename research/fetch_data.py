@@ -225,16 +225,22 @@ def fetch_symbol(
     return validate(_to_frame(rows), symbol, timeframe)
 
 
-def write_lumibot_csv(df: pd.DataFrame, symbol: str) -> Path:
+def write_lumibot_csv(df: pd.DataFrame, symbol: str, suffix: str = "1h_spot") -> Path:
     """
-    Write minute bars in the exact schema ``backtest.py`` reads.
+    Write bars in the exact schema ``backtest.py`` reads.
 
     It requires columns open/high/low/close/volume/timestamp with an ISO-8601
-    UTC timestamp, and expects the filename ``{SYMBOL}_1m_spot.csv``.
+    UTC timestamp.
+
+    Default is HOURLY (``{SYMBOL}_1h_spot.csv``). The strategy only requests
+    hourly bars, so committing minute bars would store 60x more data than the
+    harness can use -- 242 MB for this universe, against the brief's guidance on
+    large blobs. Minute parquet is still cached under research/cache/ for any
+    fine-grained validation, it is just not committed.
     """
     CSV_DIR.mkdir(parents=True, exist_ok=True)
     out = df.reset_index()[["open", "high", "low", "close", "volume", "timestamp"]]
-    path = CSV_DIR / f"{symbol}_1m_spot.csv"
+    path = CSV_DIR / f"{symbol}_{suffix}.csv"
     out.to_csv(path, index=False)
     return path
 
@@ -261,6 +267,7 @@ def main() -> int:
         reports.append(report)
         if not df.empty:
             df.to_parquet(CACHE_DIR / f"{symbol}_{HOURLY_TIMEFRAME}.parquet")
+            write_lumibot_csv(df, symbol, suffix="1h_spot")
 
     if not args.hourly_only:
         print(f"\n== {EXCHANGE_ID}: {MINUTE_TIMEFRAME} bars, {args.minute_days}d ==")
@@ -269,8 +276,8 @@ def main() -> int:
             df, report = fetch_symbol(exchange, symbol, MINUTE_TIMEFRAME, args.minute_days)
             reports.append(report)
             if not df.empty:
+                # Minute bars stay in the local cache only -- never committed.
                 df.to_parquet(CACHE_DIR / f"{symbol}_{MINUTE_TIMEFRAME}.parquet")
-                write_lumibot_csv(df, symbol)
 
     print("\n== integrity report ==")
     for report in reports:

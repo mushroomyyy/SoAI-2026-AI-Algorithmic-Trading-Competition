@@ -205,10 +205,20 @@ def _load_pandas_data() -> tuple[dict[Asset, Data], list[pd.Timestamp], list[pd.
     stock_quote = Asset(symbol="USD", asset_type=Asset.AssetType.FOREX)
 
     for symbol in symbols:
-        filename = f"{_normalize_symbol(symbol)}_1m_spot.csv"
-        path = DATA_DIR / filename
-        if not path.exists():
-            print(f"[WARN] Missing CSV for {symbol}: {path}")
+        # CHANGED FROM TEMPLATE: prefer an hourly CSV, fall back to minute.
+        #
+        # The strategy only ever requests hourly bars, so committing minute bars
+        # stores 60x more data than the harness can use. With this universe that
+        # was 242 MB of CSVs and a 297 MB clone -- against the brief's guidance
+        # to avoid large blobs, and a genuine cost to organizers who clone every
+        # submission. Hourly data is ~4 MB and drives the identical backtest.
+        stem = _normalize_symbol(symbol)
+        for suffix, timestep in (("1h_spot", "hour"), ("1m_spot", "minute")):
+            path = DATA_DIR / f"{stem}_{suffix}.csv"
+            if path.exists():
+                break
+        else:
+            print(f"[WARN] Missing CSV for {symbol}: {DATA_DIR / (stem + '_1h_spot.csv')}")
             missing_symbols.append(symbol)
             continue
 
@@ -223,7 +233,7 @@ def _load_pandas_data() -> tuple[dict[Asset, Data], list[pd.Timestamp], list[pd.
             asset_type=Asset.AssetType.CRYPTO if is_crypto else Asset.AssetType.STOCK,
         )
         quote = crypto_quote if is_crypto else stock_quote
-        pandas_data[asset] = Data(asset, df, timestep="minute", quote=quote)
+        pandas_data[asset] = Data(asset, df, timestep=timestep, quote=quote)
         starts.append(df.index.min())
         ends.append(df.index.max())
 
